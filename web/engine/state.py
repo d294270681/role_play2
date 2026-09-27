@@ -1204,6 +1204,8 @@ def apply_edit(state, op):
             text = str(op.get("name") or op.get("text") or "").strip()
             if not text:
                 return False, "缺少特质名"
+            if text in ch["traits"]:
+                return False, f"特质「{text}」已存在"
             if len(ch["traits"]) >= 4:
                 return False, "特质最多 4 个（core §6.3）"
             cost = 6

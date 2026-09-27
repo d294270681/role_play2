@@ -50,6 +50,8 @@ def roll_dice(n=2, sides=6):
 
 
 def _roll_raw(attr=0, skill=0, modifier=0, advantage=False, disadvantage=False):
+    modifier_raw = _int(modifier)
+    modifier = clamp_modifier(modifier_raw)
     if advantage and not disadvantage:
         dice = roll_dice(3)
         kept = sorted(dice, reverse=True)[:2]
@@ -63,10 +65,11 @@ def _roll_raw(attr=0, skill=0, modifier=0, advantage=False, disadvantage=False):
         kept = list(dice)
         mode = "普通"
     base = sum(kept)
-    bonus = _int(attr) + _int(skill) + _int(modifier)
+    bonus = _int(attr) + _int(skill) + modifier
     return {
         "dice": dice, "kept": kept, "mode": mode,
-        "attr": _int(attr), "skill": _int(skill), "modifier": _int(modifier),
+        "attr": _int(attr), "skill": _int(skill), "modifier": modifier,
+        "modifier_raw": modifier_raw, "modifier_clamped": modifier != modifier_raw,
         "base": base, "bonus": bonus, "total": base + bonus,
     }
 
@@ -89,7 +92,8 @@ def roll_check(attr=0, skill=0, difficulty=9, modifier=0,
                advantage=False, disadvantage=False, exertion=False):
     """掷一次判定，返回骰面、总值与四档结果的字典。
 
-    exertion=True 表示「全力以赴」（§2.4）：本次 +2，结果里给出 energy_cost=1，由状态层扣精力。
+    §2.2：情境修正由本函数内部强制钳制到 ±3（结果里 modifier_raw/modifier_clamped 记录原值）；
+    exertion=True 表示「全力以赴」（§2.4）：在钳制后的修正之外再 +2，energy_cost=1 由状态层扣精力。
     """
     res = _roll_raw(attr, skill, modifier, advantage, disadvantage)
     if exertion:
@@ -144,7 +148,8 @@ def roll_opposed(attacker_attr=0, attacker_skill=0, defender_attr=0, defender_sk
                  tie_rule="hold"):
     """§2.6 对抗判定：双方各掷 2d6+属性+技能，高者胜。
 
-    tie_rule="hold" 平局维持现状；tie_rule="cost" 平局由主动方获得代价成功。
+    双方修正同样经 §2.2 的 ±3 内部钳制；tie_rule="hold" 平局维持现状，
+    tie_rule="cost" 平局由主动方获得代价成功。
     """
     attacker = _roll_raw(attacker_attr, attacker_skill, attacker_modifier,
                          attacker_advantage, attacker_disadvantage)
