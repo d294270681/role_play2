@@ -162,6 +162,7 @@ router.post("/turn", async (req, res, next) => {
       });
     } catch (e) {
       send({ type: "error", message: `${e?.name || "Error"}: ${e?.message ?? e}` });
+      send({ type: "done" }); // 流总以 done 收尾，前端不必依赖超时兜底
     }
     res.end();
   } catch (e) {

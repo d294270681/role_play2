@@ -237,13 +237,14 @@ export async function generateImage({
   state = null,
   kind = "scene",
   prompt = "",
+  name = "",
   config = null,
   anime = false,
   timeoutMs = IMAGE_TIMEOUT_MS,
 } = {}) {
   const cfg = normalizeConfig(config || loadConfig());
   const base = normalizeBase(cfg.comfy_url);
-  const built = assemblePrompt(kind, module, state, { prompt, anime });
+  const built = assemblePrompt(kind, module, state, { prompt, anime, name });
 
   if (!(await isOnline(base))) {
     throw new ComfyUnavailableError(`ComfyUI 未在线或不可达：${base || "（未配置 comfy_url）"}（请先启动 ComfyUI，或在 /api/config 修改 comfy_url）`);
