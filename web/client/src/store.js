@@ -158,6 +158,35 @@ export function locationDanger(loc) {
   return effectiveDanger(loc, isNight(currentPeriod(game.state)));
 }
 
+// ---------------------------------------------------------------------------
+// 出图记忆：后端只管把 PNG 存到 /assets，谁对应哪个角色/地点由前端记
+// ---------------------------------------------------------------------------
+const portraitKey = () => `portrait.${game.module}.${game.slot}`;
+const locationKey = () => `location.${game.module}.${game.slot}`;
+
+function loadImages() {
+  game.portraitUrl = String(loadLocal(portraitKey(), "") || "");
+  const map = loadLocal(locationKey(), {});
+  game.locationImage = map && typeof map === "object" ? map : {};
+}
+
+function rememberPortrait(url) {
+  game.portraitUrl = url;
+  saveLocal(portraitKey(), url);
+}
+
+function rememberLocationImage(name, url) {
+  game.locationImage = { ...game.locationImage, [name]: url };
+  saveLocal(locationKey(), game.locationImage);
+}
+
+function forgetImages() {
+  game.portraitUrl = "";
+  game.locationImage = {};
+  saveLocal(portraitKey(), "");
+  saveLocal(locationKey(), {});
+}
+
 export async function loadModules() {
   const data = await api.listModules();
   game.modules = data.modules || [];
@@ -209,6 +238,7 @@ export async function openSlot(slot, { silent = false } = {}) {
   try {
     const data = await api.getState(game.module, game.slot);
     absorb(data);
+    loadImages();
     game.loaded = true;
     if (!silent) notify(`已载入 ${data.module?.title || game.module} · 槽位 ${game.slot}`, "success");
     if (!game.stream.length) seedOpening();
@@ -260,6 +290,8 @@ export async function newGame({ character = "", slot = null } = {}) {
     game.state = data.state;
     game.loaded = true;
     clearStream();
+    // 新档是另一个冒险，之前记的头像/地点图不再对应
+    forgetImages();
     remember();
     await refreshSlots();
     seedOpening();
@@ -300,7 +332,9 @@ export async function sendAction(text) {
   game.suggestions = [];
   pushStream({ kind: "action", text: action });
 
-  const narrative = pushStream({ kind: "narrative", text: "", pending: "", streaming: true });
+  // 正在接收 delta 的叙述块。判定事件会把它换成新的一块（判定卡插在叙述流中间），
+  // 所以这里必须用可变引用，不能开局捕获一次就用到底。
+  let current = pushStream({ kind: "narrative", text: "", pending: "", streaming: true });
   let notes = 0;
   let sawDone = false;
 
@@ -311,17 +345,18 @@ export async function sendAction(text) {
         case "narrative": {
           const delta = String(ev.delta ?? "");
           if (delta) {
-            narrative.pending += delta;
+            current.pending += delta;
             ensureTyper();
           }
           break;
         }
         case "dice": {
-          // 判定卡插在叙述流中间：先把正在打的字落定，再插卡
-          narrative.pending && (narrative.text += narrative.pending);
-          narrative.pending = "";
+          // 判定卡插在叙述流中间：先把正在打的字落定，再插卡，后面的续写另起一块
+          current.pending && (current.text += current.pending);
+          current.pending = "";
+          current.streaming = false;
           pushStream({ kind: "dice", result: ev.result || {} });
-          pushStream({ kind: "narrative", text: "", pending: "", streaming: true });
+          current = pushStream({ kind: "narrative", text: "", pending: "", streaming: true });
           break;
         }
         case "state": {
@@ -358,10 +393,15 @@ export async function sendAction(text) {
     if (e?.name !== "AbortError") reportError(e);
   } finally {
     _turnAbort = null;
-    narrative.pending && (narrative.text += narrative.pending);
-    narrative.pending = "";
-    narrative.streaming = false;
-    // 判定卡前后会插入占位叙述块，空的不留痕
+    // 落定本回合所有还在流式输出的叙述块（判定后重指向的 current 也在其中）
+    for (const e of game.stream) {
+      if (e.kind === "narrative" && e.streaming) {
+        e.text += e.pending;
+        e.pending = "";
+        e.streaming = false;
+      }
+    }
+    // 空叙述块（判定后没等到续写就中断等）不留痕
     for (let i = game.stream.length - 1; i >= 0; i -= 1) {
       const e = game.stream[i];
       if (e.kind === "narrative" && !e.text.trim() && !e.pending) game.stream.splice(i, 1);
@@ -449,8 +489,8 @@ export async function generateImage({ kind = "scene", prompt = "", name = "", an
     const data = await api.generateImage(game.module, game.slot, { kind, prompt, name, anime });
     const url = data?.url ? String(data.url) : "";
     if (!url) return null;
-    if (kind === "portrait") game.portraitUrl = url;
-    if (kind === "location" && name) game.locationImage = { ...game.locationImage, [name]: url };
+    if (kind === "portrait") rememberPortrait(url);
+    if (kind === "location" && name) rememberLocationImage(name, url);
     return data;
   } catch (e) {
     reportError(e);

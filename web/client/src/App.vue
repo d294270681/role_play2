@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
+import { darkTheme, dateZhCN, zhCN } from "naive-ui";
 
 import TopBar from "./components/TopBar.vue";
 import LeftSidebar from "./components/LeftSidebar.vue";
@@ -8,6 +9,7 @@ import RightPanel from "./components/RightPanel.vue";
 import SettingsModal from "./components/SettingsModal.vue";
 import Lightbox from "./components/Lightbox.vue";
 
+import { themeOverrides } from "./theme.js";
 import { bootstrap, dismissToast, game, skipTyping } from "./store.js";
 
 const booting = ref(true);
@@ -27,55 +29,57 @@ const demoMode = computed(() => Boolean(game.echo));
 </script>
 
 <template>
-  <div class="app-shell">
-    <TopBar />
+  <n-config-provider :theme="darkTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+    <div class="app-shell">
+      <TopBar />
 
-    <div v-if="demoMode" class="demo-banner">
-      <span class="dot" />
-      <b>演示模式</b>
-      <span class="sep">·</span>
-      未配置 API Key，叙述由本地回声引擎生成，判定与状态结算照常走真实规则。
-      <button class="link" @click="game.settingsOpen = true">去设置 →</button>
-    </div>
+      <div v-if="demoMode" class="demo-banner">
+        <span class="dot" />
+        <b>演示模式</b>
+        <span class="sep">·</span>
+        未配置 API Key，叙述由本地回声引擎生成，判定与状态结算照常走真实规则。
+        <button class="link" @click="game.settingsOpen = true">去设置 →</button>
+      </div>
 
-    <main class="app-body">
-      <LeftSidebar class="col-left" :class="{ collapsed: game.leftCollapsed }" />
-      <StoryStream class="col-center" @skip="skipTyping" />
-      <RightPanel class="col-right" :class="{ collapsed: game.rightCollapsed }" />
-    </main>
+      <main class="app-body">
+        <LeftSidebar class="col-left" :class="{ collapsed: game.leftCollapsed }" />
+        <StoryStream class="col-center" @skip="skipTyping" />
+        <RightPanel class="col-right" :class="{ collapsed: game.rightCollapsed }" />
+      </main>
 
-    <!-- 全局浮层 -->
-    <SettingsModal v-model:show="game.settingsOpen" />
-    <Lightbox
-      v-if="game.lightbox"
-      :src="game.lightbox.url"
-      :prompt="game.lightbox.prompt"
-      @close="game.lightbox = null"
-    />
+      <!-- 全局浮层 -->
+      <SettingsModal v-model:show="game.settingsOpen" />
+      <Lightbox
+        v-if="game.lightbox"
+        :src="game.lightbox.url"
+        :prompt="game.lightbox.prompt"
+        @close="game.lightbox = null"
+      />
 
-    <div class="toast-stack">
-      <div
-        v-for="t in game.toasts"
-        :key="t.id"
-        class="toast"
-        :class="`toast-${t.level}`"
-        role="status"
-        @click="dismissToast(t.id)"
-      >
-        {{ t.text }}
+      <div class="toast-stack">
+        <div
+          v-for="t in game.toasts"
+          :key="t.id"
+          class="toast"
+          :class="`toast-${t.level}`"
+          role="status"
+          @click="dismissToast(t.id)"
+        >
+          {{ t.text }}
+        </div>
+      </div>
+
+      <div v-if="booting" class="boot-mask">
+        <div class="boot-inner">正在连接跑团台…</div>
+      </div>
+      <div v-else-if="bootError" class="boot-mask">
+        <div class="boot-inner">
+          <b>后端连接失败</b>
+          <p>{{ bootError }}</p>
+        </div>
       </div>
     </div>
-
-    <div v-if="booting" class="boot-mask">
-      <div class="boot-inner">正在连接跑团台…</div>
-    </div>
-    <div v-else-if="bootError" class="boot-mask">
-      <div class="boot-inner">
-        <b>后端连接失败</b>
-        <p>{{ bootError }}</p>
-      </div>
-    </div>
-  </div>
+  </n-config-provider>
 </template>
 
 <style scoped>

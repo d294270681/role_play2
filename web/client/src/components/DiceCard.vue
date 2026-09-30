@@ -36,7 +36,21 @@ onBeforeUnmount(() => {
   if (stop) clearTimeout(stop);
 });
 
-const keptSet = computed(() => new Set((props.result.kept || []).map(String)));
+/**
+ * 每颗骰子是否被计入总值。后端只给 kept 的面值集合、不给下标，
+ * 这里按多重集差集贪心消费：同值骰一留一弃（如劣势 [5,5,3] 取 [5,3]）时
+ * 只标一颗 kept，不会两颗都亮。
+ */
+const keptFlags = computed(() => {
+  const pool = (props.result.kept || []).map(Number);
+  return (props.result.dice || []).map((face) => {
+    const i = pool.findIndex((k) => k === Number(face));
+    if (i < 0) return false;
+    pool.splice(i, 1);
+    return true;
+  });
+});
+
 const meta = computed(() => tierMeta(props.result.tier, props.result.tier_index));
 const total = computed(() => Number(props.result.total) || 0);
 const difficulty = computed(() => Number(props.result.difficulty) || 0);
@@ -58,7 +72,7 @@ const difficultyName = computed(
         v-for="(face, i) in faces"
         :key="i"
         class="die"
-        :class="{ kept: keptSet.has(String(face)) && !spinning, dropped: !spinning && !keptSet.has(String(face)) }"
+        :class="{ kept: !spinning && keptFlags[i], dropped: !spinning && !keptFlags[i] }"
       >
         <span class="pip">{{ face }}</span>
       </div>

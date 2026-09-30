@@ -10,7 +10,14 @@ const characterName = ref("");
 /** 当前本里第一个空槽 / 当前槽。 */
 const freeSlot = computed(() => game.slots.find((s) => !s.exists)?.slot || 1);
 
-function pickModule(dir) {
+async function pickModule(dir) {
+  if (dir === game.module) return;
+  if (game.busy) {
+    // 回合还在流式接收：此时切本会先 clearStream()，随后旧本的 state 事件
+    // 又会把旧存档盖到新本面板上。等回合结束（或先中止）再切。
+    notify("回合进行中，等这一回合结束再切本", "warn");
+    return;
+  }
   selectModule(dir).catch((e) => notify(e?.message ?? String(e), "error"));
 }
 
