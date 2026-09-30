@@ -1,5 +1,9 @@
 web/config.json
 web/saves/
+web/assets/
+web/node_modules/
+web/client/node_modules/
+web/client/dist/
 .tower/worktrees/
 __pycache__/
 *.pyc
