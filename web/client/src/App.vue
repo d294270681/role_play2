@@ -29,7 +29,15 @@ const demoMode = computed(() => Boolean(game.echo));
 </script>
 
 <template>
-  <n-config-provider :theme="darkTheme" :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+  <!-- abstract：不渲染包装元素。默认会多出一层无高度的 div.n-config-provider，
+       打断 html/body/#app 的 100% 高度链，.app-shell 会塌成内容高、被 overflow:hidden 裁掉。 -->
+  <n-config-provider
+    abstract
+    :theme="darkTheme"
+    :theme-overrides="themeOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
     <div class="app-shell">
       <TopBar />
 
