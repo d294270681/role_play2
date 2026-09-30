@@ -3,11 +3,24 @@
  *
  * 字段：
  *   base_url   OpenAI 兼容接口地址（默认 https://api.openai.com/v1）
- *   api_key    为空时 /api/turn 走回声调试模式
+ *   api_key    为空时看 kimi_oauth：启用 OAuth 就走 Kimi 凭证，两者都没有才走回声调试模式
  *   model      模型名
  *   temperature 0–2
  *   comfy_url  本机 ComfyUI 地址（默认 http://127.0.0.1:8188）
- * 可选扩展键：stream（默认 true）、timeout（秒，默认 180）。
+ * 可选扩展键：stream（默认 true）、timeout（秒，默认 180）、
+ *   kimi_oauth {enabled?, credentials_path?, token_url?, client_id?}（缺省值见 auth.js）。
+ *
+ * 想直接复用本机 Kimi Code 的 OAuth 凭证（不用手抄 api_key）时，web/config.json 这样写：
+ *   {
+ *     "base_url": "https://api.kimi.com/coding/v1",
+ *     "api_key": "",
+ *     "model": "k3",
+ *     "temperature": 1,
+ *     "kimi_oauth": { "credentials_path": "C:/Users/DMH/.kimi-code/credentials/kimi-code.json" }
+ *   }
+ * 注意 k3 只接受 temperature=1（写别的值模型接口会 400 报 invalid temperature）。
+ * 省略 kimi_oauth 时也会自动检测默认凭证文件是否存在；写 { "enabled": false } 可强制关掉。
+ * GET /api/config 的掩码视图只给 auth_mode / has_key / echo，绝不包含任何 token。
  *
  * 写盘与 web/engine/gm.py（M2）一致：先写 .tmp 再原子改名，JSON 为 ensure_ascii=False 风格（UTF-8 原样）。
  */
@@ -15,6 +28,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+import * as authMod from "./auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,7 +74,7 @@ function toFloat(v, dflt = 0, lo = null, hi = null) {
   return out;
 }
 
-/** 补齐默认值、修剪字符串、钳制温度与超时。 */
+/** 补齐默认值、修剪字符串、钳制温度与超时；kimi_oauth 规范化为 auth.js 的三字段结构。 */
 export function normalizeConfig(config) {
   const cfg = defaultConfig();
   if (config && typeof config === "object" && !Array.isArray(config)) {
@@ -74,7 +89,23 @@ export function normalizeConfig(config) {
   cfg.comfy_url = String(cfg.comfy_url || DEFAULT_CONFIG.comfy_url).trim().replace(/\/+$/, "");
   cfg.stream = cfg.stream !== false;
   cfg.timeout = Math.max(5, toInt(cfg.timeout, DEFAULT_CONFIG.timeout));
+  if ("kimi_oauth" in cfg) {
+    const oauth = authMod.normalizeOAuthSettings(cfg.kimi_oauth);
+    if (oauth) cfg.kimi_oauth = oauth;
+    else delete cfg.kimi_oauth; // 写成 null / 字符串等无效值 → 退回「自动检测」
+  }
   return cfg;
+}
+
+/**
+ * Kimi OAuth 是否启用：配置里显式写了 kimi_oauth 就听它的（enabled:false 可关），
+ * 没写则自动检测默认凭证文件在不在。
+ */
+export function oauthActive(config = null) {
+  const cfg = config && typeof config === "object" ? normalizeConfig(config) : loadConfig();
+  const oauth = cfg.kimi_oauth;
+  if (oauth) return oauth.enabled !== false;
+  return authMod.credentialsExist(null);
 }
 
 function writeFile(p, cfg) {
@@ -112,11 +143,14 @@ export function saveConfig(config, configPath = null) {
   return p;
 }
 
-/** 合并白名单字段后落盘（api_key 传空串表示清除），返回规范化后的新配置。 */
+/**
+ * 合并白名单字段后落盘（api_key 传空串表示清除；kimi_oauth 传 false 表示强制关掉 OAuth），
+ * 返回规范化后的新配置。
+ */
 export function updateConfig(patch, configPath = null) {
   const cfg = loadConfig(configPath);
   if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    for (const key of ["base_url", "api_key", "model", "temperature", "comfy_url", "stream", "timeout"]) {
+    for (const key of ["base_url", "api_key", "model", "temperature", "comfy_url", "stream", "timeout", "kimi_oauth"]) {
       if (key in patch && patch[key] !== null && patch[key] !== undefined) cfg[key] = patch[key];
     }
   }
@@ -124,10 +158,11 @@ export function updateConfig(patch, configPath = null) {
   return normalizeConfig(cfg);
 }
 
-/** 给前端的掩码视图：只暴露 has_key 与尾 4 位，绝不回传完整 api_key。 */
+/** 给前端的掩码视图：只暴露 has_key 与尾 4 位，绝不回传完整 api_key；OAuth 模式同样不回显任何 token。 */
 export function maskedConfig(config) {
   const cfg = normalizeConfig(config);
   const key = cfg.api_key || "";
+  const oauth = oauthActive(cfg);
   return {
     base_url: cfg.base_url,
     model: cfg.model,
@@ -135,13 +170,15 @@ export function maskedConfig(config) {
     stream: cfg.stream,
     timeout: cfg.timeout,
     comfy_url: cfg.comfy_url,
-    has_key: Boolean(key),
+    has_key: Boolean(key) || oauth,
     api_key_tail: key.length >= 4 ? key.slice(-4) : (key ? "***" : ""),
-    echo: !key,
+    echo: !key && !oauth,
+    auth_mode: key ? "api-key" : (oauth ? "kimi-oauth" : "echo"),
   };
 }
 
 export function configHasKey(config = null) {
   const cfg = config && typeof config === "object" ? config : loadConfig();
-  return Boolean(String(cfg.api_key || "").trim());
+  if (String(cfg.api_key || "").trim()) return true;
+  return oauthActive(cfg);
 }
