@@ -1,7 +1,7 @@
 /**
  * 配置端点：
  *   GET  /api/config  掩码视图（has_key / 尾 4 位，绝不回传完整 api_key）
- *   POST /api/config  合并白名单字段后落盘 {base_url?, api_key?, model?, temperature?, comfy_url?, stream?, timeout?}
+ *   POST /api/config  合并白名单字段后落盘 {base_url?, api_key?, model?, temperature?, comfy_url?, stream?, timeout?, kimi_oauth?}
  */
 
 import { Router } from "express";

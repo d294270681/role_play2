@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "verify": "node server/engine/verify-parity.mjs && node -e \"Promise.all(['./server/config.js','./server/comfy.js','./server/gm.js','./server/index.js','./server/routes/index.js'].map((p) => import(p))).then(() => console.log('[verify] 全部服务端模块加载 OK')).catch((e) => { console.error(e); process.exit(1); })\""
+    "verify": "node server/engine/verify-parity.mjs && node -e \"Promise.all(['./server/config.js','./server/auth.js','./server/comfy.js','./server/gm.js','./server/index.js','./server/routes/index.js'].map((p) => import(p))).then(() => console.log('[verify] 全部服务端模块加载 OK')).catch((e) => { console.error(e); process.exit(1); })\""
   },
   "dependencies": {
     "express": "^5.2.1"
