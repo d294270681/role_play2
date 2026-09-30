@@ -4,7 +4,9 @@
  * 设计对齐分支 feat/rpg-backend-gm-protocol-and-http-api-w2 的 web/engine/gm.py（M2，974 行），
  * 引擎部分改用 M4 的 Node 移植（web/server/engine/*.js）。本版新增：
  * - 协议 JSON 增加 image_prompt 键：非空时回合结束后异步调 comfy.js 生成插图并发 image 事件；
- * - LLM 客户端用 Node 22 原生 fetch 解析 SSE（无 api_key 时回声调试模式）。
+ * - LLM 客户端用 Node 22 原生 fetch 解析 SSE（无 api_key 时回声调试模式）；
+ * - 凭证来源新增 Kimi OAuth：api_key 为空且启用 kimi_oauth 时，Authorization 头由 auth.js 提供
+ *   （带 60s 余量自动刷新，过期写回凭证文件），静态 api_key 与回声模式行为不变。
  *
  * 对外接口：
  *   buildMessages(module, state, action, config, history) -> [messages, meta]
@@ -27,6 +29,7 @@ import * as loader from "./engine/moduleLoader.js";
 import * as stateMod from "./engine/state.js";
 import { isDict, toInt } from "./engine/pycompat.js";
 import * as configMod from "./config.js";
+import * as authMod from "./auth.js";
 import * as comfy from "./comfy.js";
 
 export const MAX_ROUNDS = 3; // 一次回合最多几轮「判定 → 续写」
@@ -670,7 +673,7 @@ function extractDeltaText(obj) {
   return null;
 }
 
-/** OpenAI 兼容的 chat/completions 客户端；无 api_key 时自动回声调试。 */
+/** OpenAI 兼容的 chat/completions 客户端；既无 api_key 也无 Kimi OAuth 时自动回声调试。 */
 export class GMClient {
   constructor(config = null) {
     const cfg = configMod.normalizeConfig(config || {});
@@ -681,11 +684,26 @@ export class GMClient {
     this.temperature = cfg.temperature;
     this.timeout = Math.max(5, toInt(cfg.timeout, 180));
     this.stream = cfg.stream !== false;
-    this.echo = !this.api_key;
+    // 显式 api_key 优先；api_key 为空且 OAuth 生效（显式配置或自动检测到凭证文件）时走 OAuth。
+    this.oauth = !this.api_key && configMod.oauthActive(cfg) ? authMod.getProvider(cfg) : null;
+    this.echo = !this.api_key && !this.oauth;
   }
 
   endpoint() {
     return `${this.base_url}/chat/completions`;
+  }
+
+  /**
+   * Authorization 头里的凭证：OAuth 模式由 auth.js 供给（临近过期自动刷新，必要时写回凭证文件）；
+   * 静态模式直接用 api_key。错误信息里不含 token。
+   */
+  async authorizationToken() {
+    if (!this.oauth) return this.api_key;
+    try {
+      return await this.oauth.getToken();
+    } catch (e) {
+      throw new Error(`Kimi OAuth 凭证不可用：${authMod.redact(e?.message ?? e, [this.api_key])}`);
+    }
   }
 
   /** 产出模型文本增量（回声模式为本地演示文本）。超时按整段响应计（AbortSignal.timeout）。 */
@@ -696,9 +714,10 @@ export class GMClient {
     }
     const payload = { model: this.model, messages, temperature: this.temperature };
     if (this.stream) payload.stream = true;
+    const token = await this.authorizationToken();
     const headers = {
       "Content-Type": "application/json; charset=utf-8",
-      Authorization: `Bearer ${this.api_key}`,
+      Authorization: `Bearer ${token}`,
       Accept: this.stream ? "text/event-stream" : "application/json",
     };
     let res;
@@ -715,10 +734,12 @@ export class GMClient {
     if (!res.ok) {
       let body = "";
       try {
-        body = (await res.text()).split(/\s+/).join(" ").slice(0, 300);
+        body = authMod.redact((await res.text()).split(/\s+/).join(" ").slice(0, 300), [token]);
       } catch {
         body = "";
       }
+      // 401 多半是 token 被顶掉了：丢掉内存缓存，下次 getToken() 会重新读盘并刷新。
+      if (res.status === 401 && this.oauth) this.oauth.invalidate();
       throw new Error(`模型接口返回 ${res.status}：${body || res.statusText}`);
     }
     if (!this.stream) {
