@@ -1,0 +1,177 @@
+/* ===========================================================================
+   文字冒险 · 跑团台 —— 暗色主题
+   配色：墨蓝炭黑底 + 黄铜金强调 + 危险度由苔绿到血红的梯度
+   =========================================================================== */
+
+:root {
+  --ink-950: #090b0e;
+  --ink-900: #0d1014;
+  --ink-860: #11151b;
+  --ink-820: #151a21;
+  --ink-780: #1a2028;
+  --ink-740: #202832;
+  --line: #2a323e;
+  --line-soft: #222a34;
+
+  --text: #d9dfe8;
+  --text-dim: #8c98a9;
+  --text-faint: #5f6a7a;
+
+  --brass: #d4a94a;
+  --brass-dim: #8d7130;
+  --azure: #5f95d8;
+  --moss: #6fa96b;
+  --ember: #d98b3a;
+  --blood: #c2504c;
+  --violet: #9b7fd4;
+
+  --danger-0: #6fa96b;
+  --danger-1: #9dbf6d;
+  --danger-2: #d2c05a;
+  --danger-3: #d9924a;
+  --danger-4: #cf6a55;
+  --danger-5: #b83f45;
+
+  --serif: "Songti SC", "SimSun", "Noto Serif SC", "Source Han Serif SC", "Georgia", serif;
+  --sans: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Hiragino Sans GB", system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+
+  --shadow-lift: 0 10px 30px rgba(0, 0, 0, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ink-900);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* 细滚动条：深色下不刺眼 */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2c3441;
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b4657;
+  background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------- 危险度色 */
+.danger-0 { color: var(--danger-0); }
+.danger-1 { color: var(--danger-1); }
+.danger-2 { color: var(--danger-2); }
+.danger-3 { color: var(--danger-3); }
+.danger-4 { color: var(--danger-4); }
+.danger-5 { color: var(--danger-5); }
+
+.bg-danger-0 { background: var(--danger-0); }
+.bg-danger-1 { background: var(--danger-1); }
+.bg-danger-2 { background: var(--danger-2); }
+.bg-danger-3 { background: var(--danger-3); }
+.bg-danger-4 { background: var(--danger-4); }
+.bg-danger-5 { background: var(--danger-5); }
+
+/* 仪表条 */
+.gauge-rail {
+  position: relative;
+  height: 9px;
+  border-radius: 5px;
+  background: #0b0e12;
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+.gauge-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 4px;
+  transition: width 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
+  background: linear-gradient(90deg, var(--brass-dim), var(--brass));
+}
+.gauge-fill.is-life { background: linear-gradient(90deg, #7c3b3a, #c8574f); }
+.gauge-fill.is-energy { background: linear-gradient(90deg, #2f6b5c, #55ab8c); }
+.gauge-fill.is-stress { background: linear-gradient(90deg, #6a3a7d, #a06ad0); }
+
+/* 进度钟 ■□ */
+.clock-cells {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+.clock-cell {
+  width: 13px;
+  height: 13px;
+  border: 1px solid var(--brass-dim);
+  border-radius: 2px;
+  background: transparent;
+  transition: background 0.25s, box-shadow 0.25s;
+}
+.clock-cell.on {
+  background: var(--brass);
+  box-shadow: 0 0 7px rgba(212, 169, 74, 0.55);
+}
+
+/* 章节小标题 */
+.section-label {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line), transparent);
+}
+
+/* 通用卡片 */
+.pane {
+  background: var(--ink-820);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.empty-hint {
+  color: var(--text-faint);
+  font-size: 12.5px;
+  text-align: center;
+  padding: 18px 10px;
+  line-height: 1.8;
+}
+
+/* Naive UI 暗色微调 */
+.n-tabs .n-tabs-tab {
+  font-size: 12.5px;
+}
+.n-input .n-input__input-el,
+.n-input .n-input__textarea-el {
+  font-family: inherit;
+}
