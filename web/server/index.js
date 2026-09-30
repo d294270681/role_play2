@@ -70,7 +70,7 @@ export function createApp() {
       app.use((req, res, next) => {
         if (req.method !== "GET" && req.method !== "HEAD") return next();
         if (req.path.startsWith("/assets/")) return next();
-        res.sendFile(indexFile, (err) => {
+        res.sendFile(indexFile, { dotfiles: "allow" }, (err) => {
           if (err) next(err);
         });
       });
