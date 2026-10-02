@@ -1,7 +1,27 @@
 @echo off
-set PATH=F:\ai\nodejs;%PATH%
-cd /d F:\role_play2\web
-echo 启动 RPG 跑团台 http://127.0.0.1:8000
-echo （剧情插图需要 ComfyUI 在线：运行 F:\ai\启动ComfyUI.bat）
-node server\index.js
-pause
+setlocal
+chcp 65001 >nul
+cd /d "%~dp0web"
+if errorlevel 1 (
+  echo [RPG] Cannot open the web directory.
+  pause
+  exit /b 1
+)
+set "PATH=F:\ai\nodejs;%PATH%"
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [RPG] Node.js was not found. Check F:\ai\nodejs.
+  pause
+  exit /b 1
+)
+set "RPG_PORT=%~1"
+if not defined RPG_PORT set "RPG_PORT=8000"
+echo [RPG] Starting server at http://127.0.0.1:%RPG_PORT%/
+echo [RPG] Keep this window open. Press Ctrl+C to stop.
+node server\index.js "%RPG_PORT%"
+set "RPG_EXIT_CODE=%ERRORLEVEL%"
+if not "%RPG_EXIT_CODE%"=="0" (
+  echo [RPG] Server stopped with exit code %RPG_EXIT_CODE%.
+  pause
+)
+exit /b %RPG_EXIT_CODE%

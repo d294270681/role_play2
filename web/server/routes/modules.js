@@ -12,7 +12,7 @@ import * as loader from "../engine/moduleLoader.js";
 import * as stateMod from "../engine/state.js";
 import * as configMod from "../config.js";
 import * as comfy from "../comfy.js";
-import { cardPublic, loadModuleChecked, loadSave, slotArg } from "./shared.js";
+import { cardPublic, loadModuleChecked, loadSave, slotArg, statePublic, withSlotLock } from "./shared.js";
 
 const router = Router();
 
@@ -53,7 +53,7 @@ router.get("/game/state", async (req, res, next) => {
   try {
     const [mod, entry] = loadModuleChecked(req.query.module);
     const slot = slotArg(req.query.slot ?? 1);
-    const save = loadSave(entry, slot);
+    const save = await withSlotLock(entry.name, slot, () => loadSave(entry, slot));
     const cfg = configMod.loadConfig();
     const hasKey = configMod.configHasKey(cfg);
     const online = await comfy.isOnline(cfg.comfy_url);
@@ -70,7 +70,7 @@ router.get("/game/state", async (req, res, next) => {
         opening: mod.opening,
         warnings: (mod.warnings || []).slice(0, 20),
       },
-      state: save,
+      state: statePublic(save, mod),
       map: {
         locations: (mod.locations || []).map((loc) => {
           const { raw, ...rest } = loc;
@@ -78,7 +78,7 @@ router.get("/game/state", async (req, res, next) => {
         }),
         routes: mod.routes || [],
       },
-      characters: (mod.characters || []).map(cardPublic),
+      characters: (mod.characters || []).map((card) => cardPublic(card, save.character?.name)),
       events: (mod.events || []).map((e) => ({ code: e.code, name: e.name, special: Boolean(e.special) })),
       has_key: hasKey,
       echo: !hasKey,

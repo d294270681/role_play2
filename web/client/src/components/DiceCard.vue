@@ -80,7 +80,7 @@ const difficultyName = computed(
 
     <div class="math">
       <span class="atom"><i>骰面</i>{{ (result.dice || []).join(" + ") }}<em>取 {{ (result.kept || []).join("、") }}（{{ result.mode || "普通" }}）</em></span>
-      <span class="atom"><i>加值</i>{{ result.attr_name }} {{ result.attr }} + {{ result.skill_name }} {{ result.skill }} + {{ signed(result.modifier) }}<em>= {{ result.bonus }}</em></span>
+      <span class="atom"><i>加值</i>{{ result.attr_name }} {{ result.attr }} + {{ result.skill_name }} {{ result.skill }} + {{ signed(result.modifier) }}<template v-if="result.rule_modifier"> + 状态 {{ signed(result.rule_modifier) }}</template><em>= {{ result.bonus }}</em></span>
     </div>
 
     <div class="verdict">
@@ -97,6 +97,8 @@ const difficultyName = computed(
 
     <div v-if="result.exertion" class="flag">全力以赴（精力 +2 加值）</div>
     <div v-if="result.energy_cost" class="flag">消耗精力 {{ result.energy_cost }}</div>
+    <div v-for="effect in result.rule_modifiers || []" :key="effect.source" class="flag">{{ effect.source }} {{ signed(effect.value) }}</div>
+    <div v-if="result.disadvantage_sources?.length" class="flag">劣势来源：{{ result.disadvantage_sources.join('、') }}</div>
   </div>
 </template>
 

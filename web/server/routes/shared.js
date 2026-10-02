@@ -79,13 +79,44 @@ export function withSlotLock(moduleName, slot, fn) {
   const key = `${moduleName}#${slot}`;
   const prev = _slotChains.get(key) ?? Promise.resolve();
   const run = prev.then(() => fn());
-  _slotChains.set(key, run.then(() => undefined, () => undefined));
+  const settled = run.then(() => undefined, () => undefined);
+  _slotChains.set(key, settled);
+  settled.then(() => {
+    if (_slotChains.get(key) === settled) _slotChains.delete(key);
+  });
   return run;
 }
 
-export function cardPublic(card) {
-  const { raw, ...rest } = card;
-  return rest;
+function pick(source, keys) {
+  return Object.fromEntries(keys.filter((key) => Object.hasOwn(source || {}, key)).map((key) => [key, source[key]]));
+}
+
+const PUBLIC_CARD_KEYS = ["name", "title", "concept", "attributes", "skills", "gauges", "defense", "capacity", "armor", "attack", "traits", "statuses", "attitude"];
+const PUBLIC_META_KEYS = ["身份", "年龄", "外貌", "说话方式", "特点"];
+const PUBLIC_STATE_KEYS = ["version", "module", "slot", "title", "day", "period_index", "periods", "location", "character", "inventory", "funds", "relations", "clocks", "events_fired", "clues", "log", "pending_event", "pending_events"];
+
+/** 玩家接口只发送明确定义的公开字段；原始卡片和存档仍供 GM 使用。 */
+export function cardPublic(card, playerName = "") {
+  const out = pick(card, PUBLIC_CARD_KEYS);
+  out.meta = pick(card.meta, PUBLIC_META_KEYS);
+  if (card.name === playerName) {
+    Object.assign(out, pick(card, ["background", "goal", "weakness", "relations", "inventory", "funds", "xp", "xp_total"]));
+  }
+  return out;
+}
+
+export function statePublic(save, mod) {
+  const out = pick(save, PUBLIC_STATE_KEYS);
+  out.party = Object.fromEntries(Object.entries(save.party || {}).map(([name, member]) => {
+    const card = (mod.characters || []).find((c) => c.name === name);
+    // 旧档 notes 混有秘密，不能靠关键词删改；公开备注须由独立字段明确提供。
+    const description = [card?.concept, card?.meta?.["外貌"], card?.meta?.["特点"]].filter(Boolean).join("；");
+    return [name, {
+      ...pick(member, ["gauges", "relation", "statuses"]),
+      notes: String(member.public_notes ?? description),
+    }];
+  }));
+  return structuredClone(out);
 }
 
 export function nameMatch(a, b) {

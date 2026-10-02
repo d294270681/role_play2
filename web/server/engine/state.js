@@ -8,7 +8,7 @@
  *    character:{name, concept, background, goal, weakness, attributes{六项},
  *               skills{13 项}, defense, capacity, gauges{名:{value,max}},
  *               traits[], statuses[], xp, xp_total},
- *    party{NPC名:{gauges, relation, notes}}, inventory[{name,qty,slots,note}],
+ *    party{NPC名:{gauges, relation, notes(GM私有), public_notes?}}, inventory[{name,qty,slots,note}],
  *    funds, relations[{npc,value,note}], clocks[{name,value,max,consequence}],
  *    events_fired[{code,name,day}], clues[{text,done}], log[{day,period,type,text}],
  *    pending_event?}
@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 
 import * as moduleLoader from "./moduleLoader.js";
 import { ATTRS, SKILLS, clamp } from "./dice.js";
+import { upgradeCost, updateDerived } from "./rules.js";
 import {
   digitInt, fileNotFoundError, hasOwn, isDict, pyOr, pyStr, pyText, pyTruthy, toInt, valueError,
 } from "./pycompat.js";
@@ -1002,6 +1003,7 @@ export function applyEdit(state, op) {
     value = Math.min(value, 5);
     const before = toInt(ch.attributes[name], 0);
     ch.attributes[name] = value;
+    updateDerived(ch, "attr", name, before, value);
     return [true, `属性 ${name} ${before} → ${value}${clamped ? "（按上限 5 收敛）" : ""}`];
   }
 
@@ -1014,6 +1016,7 @@ export function applyEdit(state, op) {
     value = Math.min(value, 3);
     const before = toInt(ch.skills[name], 0);
     ch.skills[name] = value;
+    updateDerived(ch, "skill", name, before, value);
     return [true, `技能 ${name} ${before} → ${value}${clamped ? "（按上限 3 收敛）" : ""}`];
   }
 
@@ -1201,16 +1204,17 @@ export function applyEdit(state, op) {
   }
 
   if (action === "set_time") {
+    const hasPeriod = op.period !== null && op.period !== undefined;
+    const idx = hasPeriod ? matchPeriod(state.periods, op.period) : null;
+    if (hasPeriod && idx === null) return [false, `时段「${pyStr(op.period)}」不在时段表`];
     const parts = [];
     if (op.day !== null && op.day !== undefined) {
       const before = state.day;
       state.day = Math.max(0, toInt(op.day, before));
       parts.push(`第 ${before} 天 → 第 ${state.day} 天`);
     }
-    if (op.period !== null && op.period !== undefined) {
+    if (hasPeriod) {
       const before = currentPeriod(state);
-      const idx = matchPeriod(state.periods, op.period);
-      if (idx === null) return [false, `时段「${pyStr(op.period)}」不在时段表`];
       state.period_index = idx;
       parts.push(`时段 ${before} → ${currentPeriod(state)}`);
     }
@@ -1228,9 +1232,10 @@ export function applyEdit(state, op) {
       const cur = toInt(ch.skills[name], 0);
       if (target <= cur) return [false, `技能「${name}」当前 ${cur} 级，目标 ${target} 级无效`];
       if (target > 3) return [false, "技能上限 3 级"];
-      const cost = target * 3;
+      const cost = upgradeCost(cur, target, 3);
       if (xp < cost) return [false, `经验不足：需要 ${cost}，当前 ${xp}`];
       ch.skills[name] = target;
+      updateDerived(ch, "skill", name, cur, target);
       ch.xp = xp - cost;
       return [true, `技能「${name}」${cur} → ${target} 级，花费 ${cost} 经验（剩余 ${ch.xp}）`];
     }
@@ -1241,9 +1246,10 @@ export function applyEdit(state, op) {
       const cur = toInt(ch.attributes[name], 0);
       if (target <= cur) return [false, `属性 ${name} 当前 ${cur} 点，目标 ${target} 点无效`];
       if (target > 5) return [false, "属性上限 5"];
-      const cost = target * 5;
+      const cost = upgradeCost(cur, target, 5);
       if (xp < cost) return [false, `经验不足：需要 ${cost}，当前 ${xp}`];
       ch.attributes[name] = target;
+      updateDerived(ch, "attr", name, cur, target);
       ch.xp = xp - cost;
       return [true, `属性 ${name} ${cur} → ${target} 点，花费 ${cost} 经验（剩余 ${ch.xp}）`];
     }

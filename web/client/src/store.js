@@ -26,6 +26,7 @@ export const game = reactive({
   slots: [],
   // 载入数据
   loaded: false,
+  loading: false,
   moduleInfo: null,
   state: null,
   map: { locations: [], routes: [] },
@@ -38,6 +39,7 @@ export const game = reactive({
   stream: [],
   suggestions: [],
   busy: false,
+  turnStreaming: false,
   lastError: "",
   toasts: [],
   config: null,
@@ -128,12 +130,54 @@ function reportError(e) {
 // ---------------------------------------------------------------------------
 // 载入 / 选择
 // ---------------------------------------------------------------------------
+let _sessionVersion = 0;
+let _slotsRequest = 0;
+let _stateRevision = 0;
+let _snapshotRequest = 0;
+
+function session() {
+  return { version: _sessionVersion, module: game.module, slot: game.slot };
+}
+
+function isCurrent(context) {
+  return context.version === _sessionVersion && context.module === game.module && context.slot === game.slot;
+}
+
+function beginSession(module, slot) {
+  _sessionVersion += 1;
+  game.module = module;
+  game.slot = Number(slot) || 1;
+  game.loaded = false;
+  game.loading = false;
+  game.moduleInfo = null;
+  game.state = null;
+  game.map = { locations: [], routes: [] };
+  game.characters = [];
+  game.events = [];
+  game.suggestions = [];
+  game.portraitUrl = "";
+  game.locationImage = {};
+  game.lightbox = null;
+  game.pendingAction = "";
+  game.lastError = "";
+  clearStream();
+  remember();
+  return session();
+}
+
+function selectionBlocked() {
+  if (!game.busy) return false;
+  notify("当前操作尚未完成，请等待存档同步后再切换或新建。", "warn");
+  return true;
+}
+
 function remember() {
   saveLocal("module", game.module);
   saveLocal("slot", game.slot);
 }
 
 function absorb(payload) {
+  _stateRevision += 1;
   game.moduleInfo = payload.module || null;
   game.state = payload.state || null;
   game.map = payload.map || { locations: [], routes: [] };
@@ -198,55 +242,59 @@ export async function loadModules() {
   return game.modules;
 }
 
-export async function refreshSlots() {
-  if (!game.module) {
+export async function refreshSlots(context = session()) {
+  if (!context.module) {
     game.slots = [];
     return game.slots;
   }
-  const data = await api.listSlots(game.module);
-  game.slots = data.slots || [];
-  return game.slots;
+  const request = ++_slotsRequest;
+  const data = await api.listSlots(context.module);
+  if (isCurrent(context) && request === _slotsRequest) game.slots = data.slots || [];
+  return data.slots || [];
 }
 
 export async function selectModule(dir) {
-  if (!dir || dir === game.module) return;
-  game.module = dir;
-  game.slot = Number(loadLocal("slot", 1)) || 1;
-  clearStream();
-  game.suggestions = [];
-  game.loaded = false;
-  remember();
-  await refreshSlots();
-  const hit = game.slots.find((s) => s.slot === game.slot && s.exists);
-  if (!hit) {
-    const anySave = game.slots.find((s) => s.exists);
-    game.slot = anySave ? anySave.slot : game.slot;
-  }
-  const target = game.slots.find((s) => s.slot === game.slot && s.exists);
-  if (target) {
-    await openSlot(game.slot, { silent: true });
-  } else {
-    game.loaded = false;
-    notify(`《${game.modules.find((m) => m.dir === game.module)?.title || game.module}》还没有存档，点「＋ 新建存档」开一档。`, "info", 6000);
+  if (!dir || dir === game.module || selectionBlocked()) return false;
+  const context = beginSession(dir, loadLocal("slot", 1));
+  game.slots = [];
+  game.loading = true;
+  try {
+    const slots = await refreshSlots(context);
+    if (!isCurrent(context)) return false;
+    const target = slots.find((s) => s.slot === game.slot && s.exists) || slots.find((s) => s.exists);
+    if (target) return await openSlot(target.slot, { silent: true });
+    notify(`《${game.modules.find((m) => m.dir === dir)?.title || dir}》还没有存档，点「＋ 新建存档」开一档。`, "info", 6000);
+    return false;
+  } catch (e) {
+    if (isCurrent(context)) reportError(e);
+    return false;
+  } finally {
+    if (isCurrent(context)) game.loading = false;
   }
 }
 
 /** 打开某个槽位；不存在则返回 false（由调用方提示「先开新档」）。 */
 export async function openSlot(slot, { silent = false } = {}) {
-  game.slot = Number(slot) || 1;
-  remember();
+  if (!game.module || selectionBlocked()) return false;
+  const context = beginSession(game.module, slot);
+  game.loading = true;
   try {
-    const data = await api.getState(game.module, game.slot);
+    const data = await api.getState(context.module, context.slot);
+    if (!isCurrent(context)) return false;
     absorb(data);
     loadImages();
     game.loaded = true;
     if (!silent) notify(`已载入 ${data.module?.title || game.module} · 槽位 ${game.slot}`, "success");
-    if (!game.stream.length) seedOpening();
+    seedOpening();
     return true;
   } catch (e) {
-    game.loaded = false;
-    if (!silent) reportError(e);
+    if (isCurrent(context)) {
+      game.loaded = false;
+      if (!silent) reportError(e);
+    }
     return false;
+  } finally {
+    if (isCurrent(context)) game.loading = false;
   }
 }
 
@@ -283,23 +331,36 @@ function seedOpening() {
 // 开新档
 // ---------------------------------------------------------------------------
 export async function newGame({ character = "", slot = null } = {}) {
+  if (!game.module || selectionBlocked()) return false;
   const target = Number(slot) || game.slot || 1;
+  const context = beginSession(game.module, target);
+  game.busy = true;
+  game.loading = true;
+  let created = null;
   try {
-    const data = await api.newGame(game.module, target, character);
-    game.slot = target;
-    game.state = data.state;
-    game.loaded = true;
-    clearStream();
+    created = await api.newGame(context.module, target, character);
+    if (!isCurrent(context)) return false;
     // 新档是另一个冒险，之前记的头像/地点图不再对应
     forgetImages();
-    remember();
-    await refreshSlots();
+    // 先刷新槽位，即使随后完整快照载入失败，也让已创建的档显示为占用。
+    try { await refreshSlots(context); } catch (e) { notify(`存档已创建，槽位列表刷新失败：${e?.message ?? e}`, "warn"); }
+    const data = await api.getState(context.module, target);
+    if (!isCurrent(context)) return false;
+    absorb(data);
+    game.loaded = true;
     seedOpening();
-    notify(`已开新档：槽位 ${target}${data.overwrote ? "（覆盖了旧档）" : ""}`, "success");
+    notify(`已开新档：槽位 ${target}${created.overwrote ? "（覆盖了旧档）" : ""}`, "success");
     return true;
   } catch (e) {
-    reportError(e);
+    if (isCurrent(context)) reportError(created
+      ? new Error(`新档已保存，但完整数据载入失败：${e?.message ?? e}。请重新载入槽位 ${target}。`)
+      : e);
     return false;
+  } finally {
+    if (isCurrent(context)) {
+      game.busy = false;
+      game.loading = false;
+    }
   }
 }
 
@@ -328,8 +389,16 @@ export function canSend() {
 export async function sendAction(text) {
   const action = String(text ?? "").trim();
   if (!action || !canSend()) return;
+  const context = session();
+  const history = buildHistory();
+  const controller = new AbortController();
+  _turnAbort = controller;
+  _stateRevision += 1;
   game.busy = true;
+  // 收到后端确认才允许停止显示，确保回读能排在本回合的槽位锁之后。
+  game.turnStreaming = false;
   game.suggestions = [];
+  game.lastError = "";
   pushStream({ kind: "action", text: action });
 
   // 正在接收 delta 的叙述块。判定事件会把它换成新的一块（判定卡插在叙述流中间），
@@ -337,10 +406,13 @@ export async function sendAction(text) {
   let current = pushStream({ kind: "narrative", text: "", pending: "", streaming: true });
   let notes = 0;
   let sawDone = false;
+  let sawState = false;
+  let failed = false;
 
   try {
-    _turnAbort = new AbortController();
-    for await (const ev of api.streamTurn(game.module, game.slot, action, buildHistory(), _turnAbort.signal)) {
+    for await (const ev of api.streamTurn(context.module, context.slot, action, history, controller.signal)) {
+      if (!isCurrent(context)) break;
+      if (!controller.signal.aborted) game.turnStreaming = true;
       switch (ev?.type) {
         case "narrative": {
           const delta = String(ev.delta ?? "");
@@ -360,7 +432,11 @@ export async function sendAction(text) {
           break;
         }
         case "state": {
-          if (ev.state) game.state = ev.state;
+          if (ev.state) {
+            _stateRevision += 1;
+            game.state = ev.state;
+            sawState = true;
+          }
           game.suggestions = Array.isArray(ev.suggestions) ? ev.suggestions : [];
           // 结算明细由后端紧跟着发一条 note("结算：…")，这里不再重复渲染 changes
           break;
@@ -377,7 +453,9 @@ export async function sendAction(text) {
           break;
         }
         case "error": {
-          pushStream({ kind: "note", level: "error", text: String(ev.message ?? "回合出错") });
+          failed = true;
+          game.lastError = String(ev.message ?? "回合出错");
+          pushStream({ kind: "note", level: "error", text: game.lastError });
           break;
         }
         case "done": {
@@ -390,9 +468,12 @@ export async function sendAction(text) {
       if (sawDone) break;
     }
   } catch (e) {
-    if (e?.name !== "AbortError") reportError(e);
+    failed = true;
+    if (isCurrent(context) && e?.name !== "AbortError") reportError(e);
   } finally {
-    _turnAbort = null;
+    if (_turnAbort === controller) _turnAbort = null;
+    if (!isCurrent(context)) return;
+    game.turnStreaming = false;
     // 落定本回合所有还在流式输出的叙述块（判定后重指向的 current 也在其中）
     for (const e of game.stream) {
       if (e.kind === "narrative" && e.streaming) {
@@ -406,14 +487,31 @@ export async function sendAction(text) {
       const e = game.stream[i];
       if (e.kind === "narrative" && !e.text.trim() && !e.pending) game.stream.splice(i, 1);
     }
-    game.busy = false;
+    if (!sawDone || !sawState || failed) {
+      // GET /state 与回合共用槽位锁，等后端结算结束再恢复可操作状态。
+      game.loaded = false;
+      game.loading = true;
+      const recovered = await reloadState(context);
+      if (recovered) {
+        clearStream();
+        game.suggestions = [];
+        seedOpening();
+        if (game.lastError) pushStream({ kind: "note", level: "error", text: game.lastError });
+        notify("回合显示未完成，已同步服务端存档并恢复已保存的日志。", "info", 6000);
+      }
+    }
+    if (isCurrent(context)) {
+      game.busy = false;
+      game.loading = false;
+    }
   }
 }
 
 export function abortTurn() {
   if (_turnAbort) {
     _turnAbort.abort();
-    _turnAbort = null;
+    game.turnStreaming = false;
+    notify("已停止接收剧情。服务器仍会完成本回合，正在等待存档同步。", "info", 6000);
   }
 }
 
@@ -424,10 +522,16 @@ export async function moveTo(target) {
   if (game.busy || !game.loaded) return false;
   const to = String(target ?? "").trim();
   if (!to) return false;
+  const context = session();
+  _stateRevision += 1;
   game.busy = true;
   try {
-    const data = await api.move(game.module, game.slot, to);
-    if (data.state) game.state = data.state;
+    const data = await api.move(context.module, context.slot, to);
+    if (!isCurrent(context)) return false;
+    if (data.state) {
+      _stateRevision += 1;
+      game.state = data.state;
+    }
     pushStream({ kind: "system", text: `移动 → ${to}` });
     for (const change of data.changes || []) pushStream({ kind: "note", level: "settle", text: change });
     for (const ev of data.events || []) {
@@ -436,10 +540,10 @@ export async function moveTo(target) {
     notify(`已移动到「${to}」`, "success");
     return true;
   } catch (e) {
-    reportError(e);
+    if (isCurrent(context)) reportError(e);
     return false;
   } finally {
-    game.busy = false;
+    if (isCurrent(context)) game.busy = false;
   }
 }
 
@@ -447,32 +551,51 @@ export async function moveTo(target) {
 // 结构化编辑（/api/state/edit）
 // ---------------------------------------------------------------------------
 export async function applyEdit(op, { silent = false } = {}) {
+  if (game.busy) {
+    if (!silent) notify("当前操作尚未完成，请等待存档同步后再编辑。", "warn");
+    return false;
+  }
   if (!game.loaded) {
     if (!silent) notify("还没有载入存档", "warn");
     return false;
   }
+  const context = session();
+  _stateRevision += 1;
+  game.busy = true;
   try {
-    const data = await api.edit(game.module, game.slot, op);
-    if (data.state) game.state = data.state;
+    const data = await api.edit(context.module, context.slot, op);
+    if (!isCurrent(context)) return false;
+    if (data.ok && data.state) {
+      _stateRevision += 1;
+      game.state = data.state;
+    }
     if (!silent) {
       if (data.ok) notify(data.message || "已保存", "success", 2600);
       else notify(data.message || "编辑被拒绝", "warn", 4200);
     }
     return Boolean(data.ok);
   } catch (e) {
-    if (!silent) reportError(e);
+    if (isCurrent(context) && !silent) reportError(e);
     return false;
+  } finally {
+    if (isCurrent(context)) game.busy = false;
   }
 }
 
 /** 编辑后的存档回读（多步操作时保持面板与后端一致）。 */
-export async function reloadState() {
-  if (!game.module || !game.slot) return;
+export async function reloadState(context = session()) {
+  if (!context.module || !context.slot) return false;
+  const revision = _stateRevision;
+  const request = ++_snapshotRequest;
   try {
-    const data = await api.getState(game.module, game.slot);
+    const data = await api.getState(context.module, context.slot);
+    if (!isCurrent(context) || revision !== _stateRevision || request !== _snapshotRequest) return false;
     absorb(data);
+    game.loaded = true;
+    return true;
   } catch (e) {
-    reportError(e);
+    if (isCurrent(context) && revision === _stateRevision && request === _snapshotRequest) reportError(e);
+    return false;
   }
 }
 
@@ -484,16 +607,18 @@ let _imgBusy = false;
 /** kind: scene | location | portrait；成功后回传 URL（失败返回 null）。 */
 export async function generateImage({ kind = "scene", prompt = "", name = "", anime = false } = {}) {
   if (!game.module || _imgBusy) return null;
+  const context = session();
   _imgBusy = true;
   try {
-    const data = await api.generateImage(game.module, game.slot, { kind, prompt, name, anime });
+    const data = await api.generateImage(context.module, context.slot, { kind, prompt, name, anime });
+    if (!isCurrent(context)) return null;
     const url = data?.url ? String(data.url) : "";
     if (!url) return null;
     if (kind === "portrait") rememberPortrait(url);
     if (kind === "location" && name) rememberLocationImage(name, url);
     return data;
   } catch (e) {
-    reportError(e);
+    if (isCurrent(context)) reportError(e);
     return null;
   } finally {
     _imgBusy = false;
@@ -524,9 +649,10 @@ export async function saveConfig(patch) {
     notify("配置已保存", "success");
     // 重新探测 ComfyUI（后端 /api/game/state 才会回 comfy.online）
     if (game.loaded) {
+      const context = session();
       try {
-        const data = await api.getState(game.module, game.slot);
-        game.comfy = data.comfy || game.comfy;
+        const data = await api.getState(context.module, context.slot);
+        if (isCurrent(context)) game.comfy = data.comfy || game.comfy;
       } catch {
         /* 忽略：配置已落盘 */
       }
@@ -548,12 +674,16 @@ export async function bootstrap() {
       game.loaded = false;
       return;
     }
-    await refreshSlots();
+    const initial = session();
+    await refreshSlots(initial);
+    if (!isCurrent(initial)) return;
     const preferred = Number(loadLocal("slot", 1)) || 1;
     const hit = game.slots.find((s) => s.slot === preferred && s.exists) || game.slots.find((s) => s.exists);
     game.slot = hit ? hit.slot : preferred;
     remember();
+    const context = session();
     await loadConfig();
+    if (!isCurrent(context)) return;
     if (hit) {
       await openSlot(hit.slot, { silent: true });
     } else {

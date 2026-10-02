@@ -1,0 +1,2 @@
+# Preserve Windows batch-file line endings on checkout.
+*.bat text eol=crlf

@@ -24,6 +24,7 @@ from pathlib import Path
 
 from . import module_loader
 from .dice import ATTRS, SKILLS, clamp
+from .rules import upgrade_cost, update_derived
 
 SAVE_ROOT = Path(__file__).resolve().parents[1] / "saves"
 SLOTS_PER_MODULE = 3
@@ -952,6 +953,7 @@ def apply_edit(state, op):
         value = min(value, 5)
         before = _int(ch["attributes"].get(name), 0)
         ch["attributes"][name] = value
+        update_derived(ch, "attr", name, before, value)
         return True, f"属性 {name} {before} → {value}" + ("（按上限 5 收敛）" if clamped else "")
 
     if action == "set_skill":
@@ -965,6 +967,7 @@ def apply_edit(state, op):
         value = min(value, 3)
         before = _int(ch["skills"].get(name), 0)
         ch["skills"][name] = value
+        update_derived(ch, "skill", name, before, value)
         return True, f"技能 {name} {before} → {value}" + ("（按上限 3 收敛）" if clamped else "")
 
     if action == "set_funds":
@@ -1149,16 +1152,17 @@ def apply_edit(state, op):
         return True, f"地点 {before or '—'} → {name}"
 
     if action == "set_time":
+        has_period = op.get("period") is not None
+        idx = _match_period(state["periods"], op.get("period")) if has_period else None
+        if has_period and idx is None:
+            return False, f"时段「{op.get('period')}」不在时段表"
         parts = []
         if op.get("day") is not None:
             before = state["day"]
             state["day"] = max(0, _int(op.get("day"), before))
             parts.append(f"第 {before} 天 → 第 {state['day']} 天")
-        if op.get("period") is not None:
+        if has_period:
             before = current_period(state)
-            idx = _match_period(state["periods"], op.get("period"))
-            if idx is None:
-                return False, f"时段「{op.get('period')}」不在时段表"
             state["period_index"] = idx
             parts.append(f"时段 {before} → {current_period(state)}")
         if not parts:
@@ -1178,10 +1182,11 @@ def apply_edit(state, op):
                 return False, f"技能「{name}」当前 {cur} 级，目标 {target} 级无效"
             if target > 3:
                 return False, "技能上限 3 级"
-            cost = target * 3
+            cost = upgrade_cost(cur, target, 3)
             if xp < cost:
                 return False, f"经验不足：需要 {cost}，当前 {xp}"
             ch["skills"][name] = target
+            update_derived(ch, "skill", name, cur, target)
             ch["xp"] = xp - cost
             return True, f"技能「{name}」{cur} → {target} 级，花费 {cost} 经验（剩余 {ch['xp']}）"
         if kind == "attr":
@@ -1194,10 +1199,11 @@ def apply_edit(state, op):
                 return False, f"属性 {name} 当前 {cur} 点，目标 {target} 点无效"
             if target > 5:
                 return False, "属性上限 5"
-            cost = target * 5
+            cost = upgrade_cost(cur, target, 5)
             if xp < cost:
                 return False, f"经验不足：需要 {cost}，当前 {xp}"
             ch["attributes"][name] = target
+            update_derived(ch, "attr", name, cur, target)
             ch["xp"] = xp - cost
             return True, f"属性 {name} {cur} → {target} 点，花费 {cost} 经验（剩余 {ch['xp']}）"
         if kind == "trait":

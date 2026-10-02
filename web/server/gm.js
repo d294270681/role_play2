@@ -27,6 +27,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import * as diceMod from "./engine/dice.js";
 import * as loader from "./engine/moduleLoader.js";
 import * as stateMod from "./engine/state.js";
+import { checkEffects, applyCheckEffects } from "./engine/rules.js";
 import { isDict, toInt } from "./engine/pycompat.js";
 import * as configMod from "./config.js";
 import * as authMod from "./auth.js";
@@ -196,8 +197,12 @@ export function rollEvent(module, work, danger) {
   if (entry === null) return { code: "", name: "", raw: "", empty: true, shift: 0 };
   stateMod.applyPatch(work, {
     events: [{ code: entry.code, name: entry.name }],
-    pending_event: { code: entry.code, name: entry.name, day: toInt(work?.day, 1) },
   });
+  const pending = { code: entry.code, name: entry.name, day: toInt(work?.day, 1) };
+  if (work.pending_event) {
+    if (!Array.isArray(work.pending_events)) work.pending_events = [];
+    work.pending_events.push(pending);
+  } else work.pending_event = pending;
   let text = `时段结束事件判定触发：抽中 ${entry.code || ""} ${entry.name || ""}`.trim();
   if (entry.shift) text += `（原格未定义或已触发，顺延 ${entry.shift} 格）`;
   stateMod.addLog(work, text, "事件");
@@ -254,6 +259,7 @@ const _PROTOCOL_SPEC = `## 输出协议（必须严格遵守）
 \`\`\`json
 {
   "dice_request": null,
+  "action_cost": 1,
   "state_patch": {},
   "suggestions": ["下一步行动建议 1", "建议 2"],
   "image_prompt": null
@@ -262,11 +268,16 @@ const _PROTOCOL_SPEC = `## 输出协议（必须严格遵守）
 
 - **dice_request**：需要玩家判定时填 \`{"attr":"感知","skill":"察觉","difficulty":9,"reason":"为什么判定","advantage":false,"disadvantage":false}\`；
   attr/skill 用规则与角色卡上的名称（角色没有的项按 0 计），difficulty 见难度表（简单 7 / 普通 9 / 困难 11 / 极难 13 / 传奇 15）。
+  modifier 只写工具、准备、地形等情境修正。core 的压力、受伤、束缚由引擎自动结算，不要重复计入 modifier/disadvantage；
+  面对恐惧源时写 facing_fear:true，引擎根据角色的恐惧状态施加劣势。
   不需要判定时填 null。系统会用真骰子结算并把结果发回给你续写——你绝不能自己编造骰子点数，叙述里也不要写掷骰数字（系统会展示）。
+- **action_cost**：本回合实际消耗的总时段数（整数 0–12）。短句交谈、查看背包、澄清情况为 0；调查、长谈、休息为 1；长途行动按地图耗时。
+  有意义的准备、重复搜索、等待危险变化至少为 1。续写中保持同一行动的耗时，只在最终协议结算一次。
+  时间由引擎统一推进；正常回合不要再写 state_patch.day / period / time_advance。
 - **state_patch**：只写本回合发生变化的键，没有变化就写 {}。可用键：
   hp / energy / stress（数字=增量，或 {"delta":±N,"set":N,"max":N}）；
   gauges{仪表名: 增量 或 {delta|set, max}}；party{NPC名:{gauges:{仪表: 增量}, relation:±N, notes:"…"}}；
-  funds（增量或 {set}）；xp（增量）；location（地点名）；day（{delta|set}）；period（时段名）；time_advance（推进几个时段）；
+  funds（增量或 {set}）；xp（增量）；location（地点名）；
   add_status[] / remove_status[]；items[{name, delta|set, slots, note}]；
   relations[{npc, delta|set, note}]（钳制 ±5）；clocks[{name, advance|set, create:{max, consequence}, remove}]；
   clues_add[] / clues_done[]。
@@ -285,8 +296,8 @@ function gmPreamble(module) {
   if (module.rating) lines.push(`分级：${module.rating}（按这个尺度把握内容，不回避、不注水）。`);
   if (String(module.intro || "").trim()) lines.push(`简介：${String(module.intro).trim()}`);
   lines.push("回合流程：玩家宣言意图 → 需要时你提出判定（系统真掷骰）→ 你按结果档位叙述 → 用 state_patch 结算。");
-  lines.push("系统会在每回合结束后自动推进 1 个时段并做 §4.2 事件判定（抽中的事件会注入全文给你演绎）；"
-    + "若本回合行动本身更耗时（长途赶路、睡一觉等），在 state_patch.time_advance 里补写额外时段。");
+  lines.push("按行动真实规模填写 action_cost（总耗时）；系统对每个实际消耗的时段各做一次 §4.2 事件判定。"
+    + "小动作不会让时间和威胁凭空推进；长行动抽中的多个事件依次等待演绎，不会互相覆盖。");
   return `## GM 角色\n${lines.join("\n")}`;
 }
 
@@ -399,6 +410,7 @@ function pendingEventSection(module, save) {
   const entry = lookupEventByCode(module, pe.code) || {};
   const head = `### ${pe.code || ""} ${pe.name || entry.name || ""}`.trim();
   const lines = ["## 本回合事件（已抽中，必须在本回合叙述里处理；系统回合结束后清除）", head];
+  if (pe.day !== undefined) lines.push(`抽取于第 ${pe.day} 天；若当前已跨日，叙述途中经历或事件余波，不回拨存档时间。`);
   if (entry.raw) lines.push(clip(entry.raw, MAX_EVENT_RAW, "…（事件全文截断）"));
   return lines.join("\n");
 }
@@ -436,6 +448,10 @@ export function buildMessages(module, save, action, config = null, history = nul
   if (items) parts.push(items);
   parts.push(charactersSection(module));
   parts.push(`## 当前存档\n${stateMod.stateSummary(save, 8)}`);
+  const privateNotes = Object.entries(save.party || {})
+    .filter(([, member]) => member?.notes)
+    .map(([name, member]) => `${name}：${clip(String(member.notes), 1000, "…")}`);
+  if (privateNotes.length) parts.push(`## GM 私有备注（仅供裁决，不能直接当作玩家已知信息）\n${privateNotes.join("\n")}`);
   const pending = pendingEventSection(module, save);
   if (pending) parts.push(pending);
   parts.push(_PROTOCOL_SPEC);
@@ -536,6 +552,8 @@ export function normalizeData(data) {
   const req = data?.dice_request;
   out.dice_request = isDict(req) && Object.keys(req).length ? req : null;
   out.state_patch = isDict(data?.state_patch) ? data.state_patch : {};
+  out.action_cost = Number.isInteger(data?.action_cost) && data.action_cost >= 0 && data.action_cost <= 12
+    ? data.action_cost : null;
   const items = [];
   if (Array.isArray(data?.suggestions)) {
     for (const s of data.suggestions) {
@@ -631,6 +649,7 @@ export function echoReply(messages) {
       + "像是有人在试探什么。你没有立刻动，先让眼睛适应了暗处——"
       + "才看清脚边石板缝里积着的水，映出一截晃动的人影。";
     data = {
+      action_cost: 1,
       dice_request: {
         attr: "感知", skill: "察觉", difficulty: 9,
         reason: "分辨暗处的人影与动静", advantage: false, disadvantage: false,
@@ -646,7 +665,8 @@ export function echoReply(messages) {
       + "巷口的灯晃了一下，有人走过去，又停了半步——那个人在等什么。";
     data = {
       dice_request: null,
-      state_patch: { stress: 15, funds: { delta: 1 } },
+      action_cost: 1,
+      state_patch: ["代价成功", "失败", "大失败"].includes(tier) ? { stress: 1 } : {},
       suggestions: sample(SUGGESTION_POOL, 3),
       image_prompt: ECHO_IMAGE_PROMPT,
     };
@@ -784,7 +804,7 @@ export class GMClient {
 // 回合循环
 // ---------------------------------------------------------------------------
 
-export function rollForRequest(work, request) {
+export function rollForRequest(work, request, coreRules = true) {
   const ch = work?.character || {};
   const attrs = ch.attributes || {};
   const skills = ch.skills || {};
@@ -793,12 +813,15 @@ export function rollForRequest(work, request) {
   const attrVal = toInt(attrs[attrName], 0);
   const skillVal = toInt(skills[skillName], 0);
   const difficulty = Math.max(3, Math.min(20, toInt(request.difficulty, 9)));
-  const result = diceMod.rollCheck(
+  const effects = coreRules ? checkEffects(ch, attrName, request.facing_fear)
+    : { modifier: 0, modifiers: [], disadvantages: [] };
+  let result = diceMod.rollCheck(
     attrVal, skillVal, difficulty,
     toInt(request.modifier, 0),
     Boolean(request.advantage),
-    Boolean(request.disadvantage),
+    Boolean(request.disadvantage) || effects.disadvantages.length > 0,
   );
+  if (coreRules) result = applyCheckEffects(result, effects);
   result.attr_name = attrName;
   result.skill_name = skillName;
   result.reason = String(request.reason ?? "").trim();
@@ -812,7 +835,10 @@ export function diceReplyMessage(result) {
   return "【判定结果（系统真实掷骰，禁止改写）】\n"
     + `判定：${reason}\n`
     + `骰面：${faces} → 取 ${kept}（${result.mode}）\n`
-    + `加值：属性 ${result.attr_name}${result.attr} + 技能 ${result.skill_name}${result.skill} + 修正 ${result.modifier} = ${result.bonus}\n`
+    + `加值：属性 ${result.attr_name}${result.attr} + 技能 ${result.skill_name}${result.skill} + 情境修正 ${result.modifier}`
+    + ` + 状态修正 ${result.rule_modifier || 0} = ${result.bonus}\n`
+    + (result.rule_modifiers?.length ? `状态来源：${result.rule_modifiers.map((m) => `${m.source} ${m.value}`).join("、")}\n` : "")
+    + (result.disadvantage_sources?.length ? `劣势来源：${result.disadvantage_sources.join("、")}\n` : "")
     + `总值：${result.base} + ${result.bonus} = ${result.total}，难度 ${result.difficulty}（${result.difficulty_name}）→ 档位：${result.tier}\n`
     + "请继续输出本回合的叙述正文：承接上文，把这次判定的后果写完整（不要把骰子数字复述进叙述，系统会展示）；"
     + "末尾照常给出 ```json 块，dice_request 必须为 null。";
@@ -859,6 +885,7 @@ export async function* runTurn(module, state, action, config = null, history = n
     }
 
     let finalData = null;
+    let declaredCost = null;
     let suggestions = [];
     const narrativeParts = [];
     let degraded = false;
@@ -887,10 +914,11 @@ export async function* runTurn(module, state, action, config = null, history = n
       if (out) yield { type: "narrative", delta: out };
       if (narrative) narrativeParts.push(narrative);
       data = normalizeData(data);
+      if (declaredCost === null && data.action_cost !== null) declaredCost = data.action_cost;
       if (data.suggestions.length) suggestions = data.suggestions;
       const request = data.dice_request;
       if (request && round < MAX_ROUNDS - 1) {
-        const result = rollForRequest(work, request);
+        const result = rollForRequest(work, request, module.engine === "core");
         yield { type: "dice", result };
         messages.push({ role: "assistant", content: raw });
         messages.push({ role: "user", content: diceReplyMessage(result) });
@@ -898,6 +926,7 @@ export async function* runTurn(module, state, action, config = null, history = n
       }
       if (request) yield { type: "note", text: "已达续写轮数上限，最后一次判定未执行。" };
       finalData = data;
+      if (finalData.action_cost === null) finalData.action_cost = declaredCost;
       break;
     }
 
@@ -908,13 +937,12 @@ export async function* runTurn(module, state, action, config = null, history = n
       return;
     }
 
-    if (pendingUsed) delete work.pending_event;
-    const changes = stateMod.applyPatch(work, finalData?.state_patch || {});
-    const endedPeriod = stateMod.currentPeriod(work);
-    changes.push(...stateMod.advanceTime(work, 1));
-    const loc = findLocation(module, work.location);
-    const event = rollEvent(module, work, effectiveDanger(loc, isNight(endedPeriod)));
-    if (event !== null) {
+    if (pendingUsed) {
+      if (Array.isArray(work.pending_events) && work.pending_events.length) work.pending_event = work.pending_events.shift();
+      else delete work.pending_event;
+    }
+    const { changes, events } = settleTurn(module, work, finalData);
+    for (const event of events) {
       if (event.empty) {
         yield { type: "note", text: "时段结束触发了事件判定，但事件牌为空，已跳过。" };
       } else {
@@ -951,6 +979,27 @@ export async function* runTurn(module, state, action, config = null, history = n
     yield { type: "error", message: `${e?.name || "Error"}: ${e?.message ?? e}` };
     yield { type: "done" };
   }
+}
+
+/** 只结算一次总耗时；保留旧协议 time_advance=额外时段的兼容路径。 */
+export function settleTurn(module, work, data, eventRoll = rollEvent) {
+  const patch = { ...(data?.state_patch || {}) };
+  const cost = Number.isInteger(data?.action_cost) && data.action_cost >= 0 && data.action_cost <= 12
+    ? data.action_cost : Math.min(12, 1 + Math.max(0, toInt(patch.time_advance, 0)));
+  delete patch.time_advance;
+  // 正常回合的日期仅由耗时推进，直接编辑时间仍可用 /state/edit。
+  delete patch.day;
+  delete patch.period;
+  const changes = stateMod.applyPatch(work, patch);
+  const events = [];
+  for (let i = 0; i < cost; i += 1) {
+    const endedPeriod = stateMod.currentPeriod(work);
+    const loc = findLocation(module, work.location);
+    const event = eventRoll(module, work, effectiveDanger(loc, isNight(endedPeriod)));
+    if (event !== null) events.push(event);
+    changes.push(...stateMod.advanceTime(work, 1));
+  }
+  return { changes, events, action_cost: cost };
 }
 
 // 与 Python 版（web/engine/gm.py）逐名对应的 snake_case 别名

@@ -3,7 +3,7 @@
  * 深度 parity 验证：Node 引擎（web/server/engine/*.js）对照 Python 参照实现（web/engine/*.py）。
  *
  * 覆盖（同一份 fixture 同时喂给两边，结果深比较）：
- * - 两个真实本 listModules / loadModule 全字段（含 raw、warnings、gauge_defs、双格式地点、双列序路线、
+ * - 真实本与独立扩展夹具 listModules / loadModule 全字段（含 raw、warnings、gauge_defs、双格式地点、双列序路线、
  *   S-/M-E 事件扩展、时段链、开局）
  * - new_game 初始状态（默认玩家卡 + 指定角色卡）
  * - 同一 patch 序列（applyPatch 全键）与 edit 序列（applyEdit 全部 22 个 op，含非法/边界输入）后的
@@ -19,11 +19,14 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 
 import * as dice from "./dice.js";
 import * as ml from "./moduleLoader.js";
 import * as state from "./state.js";
+import * as rules from "./rules.js";
+import { createParityModule } from "./parity-fixture.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -31,17 +34,46 @@ const PY_ENGINE_DIR = path.resolve(REPO_ROOT, "web", "engine");
 const PYTHON = readArg("--python") || process.env.PYTHON || "python";
 const MAX_DIFFS = 25;
 
+// 在完整的临时项目中运行，模块删除和玩家已有存档均不会影响夹具。
+if (!process.argv.includes("--isolated-worker")) {
+  const isolatedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "rpg-parity-"));
+  let status = 1;
+  try {
+    fs.mkdirSync(path.join(isolatedRoot, "web", "server", "engine"), { recursive: true });
+    fs.mkdirSync(path.join(isolatedRoot, "web", "engine"), { recursive: true });
+    for (const name of fs.readdirSync(__dirname)) {
+      if (/\.(js|mjs|json)$/.test(name)) fs.copyFileSync(path.join(__dirname, name), path.join(isolatedRoot, "web", "server", "engine", name));
+    }
+    for (const name of fs.readdirSync(PY_ENGINE_DIR)) {
+      if (name.endsWith(".py")) fs.copyFileSync(path.join(PY_ENGINE_DIR, name), path.join(isolatedRoot, "web", "engine", name));
+    }
+    fs.cpSync(path.join(REPO_ROOT, "core"), path.join(isolatedRoot, "core"), { recursive: true });
+    fs.cpSync(path.join(REPO_ROOT, "modules", "gangcheng"), path.join(isolatedRoot, "modules", "gangcheng"), { recursive: true });
+    createParityModule(isolatedRoot);
+    const run = spawnSync(process.execPath, [path.join(isolatedRoot, "web", "server", "engine", "verify-parity.mjs"), "--isolated-worker", "--python", PYTHON], { stdio: "inherit" });
+    if (run.error) console.error(`无法启动独立校验：${run.error.message}`);
+    status = run.status ?? 1;
+  } finally {
+    if (path.dirname(path.resolve(isolatedRoot)) !== path.resolve(os.tmpdir()) || !path.basename(isolatedRoot).startsWith("rpg-parity-")) throw new Error("临时目录校验失败，停止清理");
+    fs.rmSync(isolatedRoot, { recursive: true, force: true });
+  }
+  process.exit(status);
+}
+if (path.dirname(REPO_ROOT) !== path.resolve(os.tmpdir()) || !path.basename(REPO_ROOT).startsWith("rpg-parity-")) {
+  throw new Error("独立校验 worker 只能在自建临时项目中运行");
+}
+
 // ---------------------------------------------------------------------------
 // fixture：两边执行完全相同的操作序列
 // ---------------------------------------------------------------------------
 
-const MODULES = ["gangcheng", "lvmao-yinqi-diyu"];
+const MODULES = ["gangcheng", "parity-rules"];
 
-const PATCHES_LVMAO = [
+const PATCHES_EXTENDED = [
   { hp: -3, energy: 2, stress: { delta: 3, max: 20 } },
-  { gauges: { 淫度: { delta: 25, max: 100 }, 心瘾度: 5, 新仪表: { set: 7, max: 13 } } },
-  { gauges: { 淫度: { value: 33, max: 100 } } },
-  { party: { 温稚宁: { gauges: { 淫度: { delta: 10 } }, relation: 2, notes: "第一次备注" } } },
+  { gauges: { 信任度: { delta: 25, max: 100 }, 警觉度: 5, 新仪表: { set: 7, max: 13 } } },
+  { gauges: { 信任度: { value: 33, max: 100 } } },
+  { party: { 温稚宁: { gauges: { 信任度: { delta: 10 } }, relation: 2, notes: "第一次备注" } } },
   { party: { 温稚宁: { relation: { set: -2 }, notes: "第二次备注" }, 陆渊: { gauges: { 生命: -2 }, relation: -5 } } },
   { funds: 30 },
   { funds: { delta: -5 } },
@@ -49,7 +81,7 @@ const PATCHES_LVMAO = [
   { xp: 5 },
   { xp_total: { delta: 3 } },
   { xp: { set: 2 } },
-  { location: "小学·王主任教研室" },
+  { location: "城档案室" },
   { day: { delta: 2 } },
   { day: { set: 4 } },
   { period: "傍晚" },
@@ -59,16 +91,16 @@ const PATCHES_LVMAO = [
   { time_advance: 3 },
   { time_advance: 5 },
   { add_status: "通缉 / 暴露（码头帮）" },
-  { add_status: ["走神微痒", "腿软漏蜜"] },
-  { add_status: "走神微痒" },
-  { remove_status: "腿软" },
+  { add_status: ["注意力分散", "腿部疲劳"] },
+  { add_status: "注意力分散" },
+  { remove_status: "腿部" },
   { remove_status: "不存在状态" },
-  { items: [{ name: "暗网摄像设备", delta: 2, note: "摄影" }, { name: "新道具", set: 3, slots: 2, note: "测试" }] },
-  { items: [{ name: "暗网摄像设备", delta: -1 }, { name: "新道具", set: 0 }] },
+  { items: [{ name: "摄像设备", delta: 2, note: "摄影" }, { name: "新道具", set: 3, slots: 2, note: "测试" }] },
+  { items: [{ name: "摄像设备", delta: -1 }, { name: "新道具", set: 0 }] },
   { items: [{ name: "不存在的道具", delta: 2 }] },
   { relations: [{ npc: "陆渊", delta: 2, note: "布局者" }, { npc: "新NPC", set: 3 }] },
   { relations: [{ npc: "陆渊", set: 9 }] },
-  { clocks: [{ name: "崩溃钟", create: { max: 6, consequence: "彻底沉沦" }, advance: 2 }] },
+  { clocks: [{ name: "崩溃钟", create: { max: 6, consequence: "调查中断" }, advance: 2 }] },
   { clocks: [{ name: "崩溃钟", advance: 9 }] },
   { clocks: [{ name: "崩溃钟", create: { max: 8 } }] },
   { clocks: [{ name: "暴露钟", set: 3, create: { max: 6 } }] },
@@ -78,7 +110,7 @@ const PATCHES_LVMAO = [
   { clues_done: "线索一" },
   { clues_done: 1 },
   { clues_done: "不存在" },
-  { events: [{ code: "S-01", name: "巨蝇登门" }, "纯字符串事件"] },
+  { events: [{ code: "S-01", name: "档案送达" }, "纯字符串事件"] },
   { pending_event: { code: "M-E1", name: "抉择牌时刻" } },
   { log: "手工日志一条" },
   { log: ["批量一", "批量二"] },
@@ -131,10 +163,10 @@ const PATCHES_TRICKY = [
   { clocks: [{ name: "空钟", create: {}, advance: 1 }] },
 ];
 
-const OPS_LVMAO = [
-  { op: "set_gauge", name: "淫度", value: 42, max: 100 },
+const OPS_EXTENDED = [
+  { op: "set_gauge", name: "信任度", value: 42, max: 100 },
   { op: "set_gauge", name: "新仪表X", value: 3 },
-  { op: "set_gauge", name: "心瘾度", value: 61 },
+  { op: "set_gauge", name: "警觉度", value: 61 },
   { op: "set_gauge", name: "权限等级", max: 5 },
   { op: "set_gauge" },
   { op: "set_gauge", name: "X" },
@@ -156,7 +188,7 @@ const OPS_LVMAO = [
   { op: "remove_item", name: "不存在" },
   { op: "set_relation", npc: "陆渊", value: 3, note: "布局者" },
   { op: "set_relation", npc: "陆渊", value: 9 },
-  { op: "set_clock", name: "崩溃钟", value: 4, max: 6, consequence: "沉沦" },
+  { op: "set_clock", name: "崩溃钟", value: 4, max: 6, consequence: "中断" },
   { op: "set_clock", name: "崩溃钟", value: 9 },
   { op: "add_clock", name: "崩溃钟", max: 8 },
   { op: "add_clock", name: "新钟", max: 4, consequence: "x" },
@@ -168,9 +200,9 @@ const OPS_LVMAO = [
   { op: "toggle_clue", index: 0 },
   { op: "remove_clue", text: "第二条线索" },
   { op: "remove_clue", text: "不存在" },
-  { op: "add_status", text: "走神微痒" },
-  { op: "add_status", name: "走神微痒" },
-  { op: "remove_status", text: "走神" },
+  { op: "add_status", text: "注意力分散" },
+  { op: "add_status", name: "注意力分散" },
+  { op: "remove_status", text: "注意力" },
   { op: "remove_status", text: "无" },
   { op: "add_trait", text: "摄影署名" },
   { op: "add_trait", text: "摄影署名" },
@@ -179,7 +211,7 @@ const OPS_LVMAO = [
   { op: "add_trait", text: "丙" },
   { op: "add_trait", text: "丁" },
   { op: "remove_trait", text: "摄影署名" },
-  { op: "set_location", name: "小学·王主任教研室" },
+  { op: "set_location", name: "城档案室" },
   { op: "set_time", day: 3, period: "深夜" },
   { op: "set_time", period: "不存在" },
   { op: "set_time" },
@@ -222,12 +254,12 @@ function buildFuzz() {
   const rnd = lcg(20260928);
   const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
   const int = (lo, hi) => lo + Math.floor(rnd() * (hi - lo + 1));
-  const gauges = ["生命", "精力", "压力", "决心", "淫度", "心瘾度", "随机表"];
+  const gauges = ["生命", "精力", "压力", "决心", "信任度", "警觉度", "随机表"];
   const attrs = ["体魄", "敏捷", "智识", "感知", "意志", "魅力", "不存在"];
   const skills = ["格斗", "运动", "射击", "潜行", "巧手", "学识", "医疗", "工艺", "察觉", "生存", "镇定", "交涉", "欺瞒", "不存在"];
   const npcs = ["温稚宁", "陆渊", "王主任", "新NPC", "不存在"];
-  const items = ["暗网摄像设备", "手稿", "新道具", "不存在"];
-  const texts = ["走神微痒", "腿软漏蜜", "不存在状态", "新特质"];
+  const items = ["摄像设备", "手稿", "新道具", "不存在"];
+  const texts = ["注意力分散", "腿部疲劳", "不存在状态", "新特质"];
   const periods = ["清晨", "深夜", "傍晚", 0, 3, true, "不存在"];
 
   const patches = [];
@@ -250,7 +282,7 @@ function buildFuzz() {
         p[pick(["xp", "xp_total"])] = pick([int(-2, 6), { delta: int(-3, 3) }, { set: int(0, 20) }]);
         break;
       case 5:
-        p[pick(["location", "period"])] = pick(["旧码头", "小学·王主任教研室", "不存在", 2, true, 0]);
+        p[pick(["location", "period"])] = pick(["旧码头", "城档案室", "不存在", 2, true, 0]);
         break;
       case 6:
         p.day = pick([int(-2, 6), { delta: int(-3, 3) }, { set: int(0, 9) }]);
@@ -273,7 +305,7 @@ function buildFuzz() {
         break;
       default:
         p[pick(["clues_add", "clues_done", "events", "log", "pending_event"])] = pick([
-          "线索甲", [0, 1, "线索甲"], { code: "S-01", name: "巨蝇登门" }, { name: "只有名字" }, { a: 1 }, "", 7, true, null,
+          "线索甲", [0, 1, "线索甲"], { code: "S-01", name: "档案送达" }, { name: "只有名字" }, { a: 1 }, "", 7, true, null,
         ]);
         break;
     }
@@ -307,25 +339,37 @@ function buildFuzz() {
 
 const FUZZ = buildFuzz();
 
+const RULE_CASES = [];
+for (const attr of dice.ATTRS) for (let stress = 0; stress <= 10; stress += 1) {
+  for (const calm of [false, true]) for (const hp of [4, 5]) {
+    RULE_CASES.push({ attr, facing_fear: stress % 2 === 0, character: {
+      gauges: { 压力: { value: stress, max: 10 }, 生命: { value: hp, max: 8 } },
+      traits: calm ? ["冷静：压力惩罚推迟 2 点"] : [], statuses: ["束缚（绳索）", "恐惧", "受伤"],
+    } });
+  }
+}
+RULE_CASES.push({ attr: "敏捷", facing_fear: true, character: { statuses: ["受伤", "恐惧"] } });
+
 const FIXTURE = {
+  ruleCases: RULE_CASES,
   modules: MODULES,
   newGameCases: [
     { module: "gangcheng", slot: 1, character: null },
     { module: "gangcheng", slot: 3, character: "老魏" },
     { module: "gangcheng", slot: 1, character: "张三" },
-    { module: "lvmao-yinqi-diyu", slot: 1, character: null },
-    { module: "lvmao-yinqi-diyu", slot: 2, character: "温稚宁" },
-    { module: "lvmao-yinqi-diyu", slot: 3, character: "江蘅" },
-    { module: "lvmao-yinqi-diyu", slot: 1, character: "不存在的角色" },
+    { module: "parity-rules", slot: 1, character: null },
+    { module: "parity-rules", slot: 2, character: "温稚宁" },
+    { module: "parity-rules", slot: 3, character: "江蘅" },
+    { module: "parity-rules", slot: 1, character: "不存在的角色" },
   ],
   patchCases: [
-    { id: "lvmao", module: "lvmao-yinqi-diyu", character: "沈亦舟", patches: PATCHES_LVMAO },
+    { id: "extended", module: "parity-rules", character: "沈亦舟", patches: PATCHES_EXTENDED },
     { id: "gangcheng", module: "gangcheng", character: "老魏", patches: PATCHES_GANGCHENG },
     { id: "tricky", module: "gangcheng", character: "老魏", patches: PATCHES_TRICKY },
     { id: "nonDict", module: "gangcheng", character: null, patches: [null, "不是对象", 42] },
   ],
   editCases: [
-    { id: "lvmao", module: "lvmao-yinqi-diyu", character: "沈亦舟", ops: OPS_LVMAO },
+    { id: "extended", module: "parity-rules", character: "沈亦舟", ops: OPS_EXTENDED },
     { id: "gangcheng", module: "gangcheng", character: null, ops: OPS_GANGCHENG },
     { id: "nonDict", module: "gangcheng", character: null, ops: [null, "字符串", 42] },
   ],
@@ -401,9 +445,13 @@ import json, sys
 sys.path.insert(0, sys.argv[1])
 from web.engine import dice, module_loader
 from web.engine import state as st
+from web.engine import rules
 
 fixture = json.loads(sys.stdin.buffer.read().decode("utf-8"))
 out = {}
+out["rule_effects"] = [rules.check_effects(case["character"], case["attr"], case["facing_fear"]) for case in fixture["ruleCases"]]
+out["rule_tiers"] = [rules.apply_check_effects({"kept": [3, 4], "base": 7, "bonus": 3, "difficulty": 11}, effects) for effects in out["rule_effects"]]
+out["upgrade_costs"] = [rules.upgrade_cost(start, end, unit) for unit in (3, 5) for start in range(6) for end in range(6)]
 temp_module = fixture["tempModule"]
 
 out["module_list"] = module_loader.list_modules()
@@ -441,7 +489,7 @@ for case in fixture["normalizeCases"]:
 out["normalize_runs"] = normalize_runs
 
 # --- fuzz：同一份伪随机序列 ---
-fz = st.new_game("lvmao-yinqi-diyu", 1, "沈亦舟")
+fz = st.new_game("parity-rules", 1, "沈亦舟")
 fuzz_patch_changes = [st.apply_patch(fz, patch) for patch in fixture["fuzz"]["patches"]]
 fuzz_edit_results = []
 for op in fixture["fuzz"]["ops"]:
@@ -575,6 +623,9 @@ sys.stdout.buffer.write(json.dumps(out, ensure_ascii=False).encode("utf-8"))
 
 function computeNodeSide() {
   const out = {};
+  out.rule_effects = FIXTURE.ruleCases.map((c) => rules.checkEffects(c.character, c.attr, c.facing_fear));
+  out.rule_tiers = out.rule_effects.map((effects) => rules.applyCheckEffects({ kept: [3, 4], base: 7, bonus: 3, difficulty: 11 }, effects));
+  out.upgrade_costs = [3, 5].flatMap((unit) => Array.from({ length: 6 }, (_, start) => Array.from({ length: 6 }, (_, end) => rules.upgradeCost(start, end, unit))).flat());
   out.module_list = ml.listModules();
   out.modules = Object.fromEntries(MODULES.map((name) => [name, ml.loadModule(name)]));
 
@@ -610,7 +661,7 @@ function computeNodeSide() {
   }
   out.normalize_runs = normalizeRuns;
 
-  const fz = state.newGame("lvmao-yinqi-diyu", 1, "沈亦舟");
+  const fz = state.newGame("parity-rules", 1, "沈亦舟");
   const fuzzPatchChanges = FIXTURE.fuzz.patches.map((patch) => state.applyPatch(fz, patch));
   const fuzzEditResults = FIXTURE.fuzz.ops.map((op) => state.applyEdit(fz, op));
   out.fuzz_run = {
@@ -815,17 +866,20 @@ if (!fs.existsSync(path.join(PY_ENGINE_DIR, "state.py"))) {
   fail(`找不到 Python 参照实现：${PY_ENGINE_DIR}`);
 }
 
-const tempDir = path.join(state.SAVE_ROOT, FIXTURE.tempModule);
+const tempDir = path.resolve(state.SAVE_ROOT, FIXTURE.tempModule);
+if (!tempDir.startsWith(`${REPO_ROOT}${path.sep}`) || path.dirname(tempDir) !== state.SAVE_ROOT) {
+  throw new Error("校验存档路径越界，停止运行");
+}
 fs.rmSync(tempDir, { recursive: true, force: true });
 
 const node = computeNodeSide();
 
 // 1) Node 先写自己的存档（供 Python 读取）
-const nodeSaveState = state.newGame("lvmao-yinqi-diyu", 2, "温稚宁");
+const nodeSaveState = state.newGame("parity-rules", 2, "温稚宁");
 nodeSaveState.module = FIXTURE.tempModule;
 nodeSaveState.title = "parity-node";
-nodeSaveState.location = "暗网（虚拟地图）";
-state.applyPatch(nodeSaveState, { gauges: { 淫度: { delta: 12 } }, clues_add: "由 Node 写入" });
+nodeSaveState.location = "档案网络（虚拟地图）";
+state.applyPatch(nodeSaveState, { gauges: { 信任度: { delta: 12 } }, clues_add: "由 Node 写入" });
 const nodeSavePath = state.save(nodeSaveState, 1);
 const nodeSaveFileContent = JSON.parse(fs.readFileSync(nodeSavePath, "utf8"));
 const expectedFileContent = JSON.parse(JSON.stringify(nodeSaveState));
@@ -853,8 +907,11 @@ try {
 
 // 4) 逐节比较
 check("module_list", py.module_list, node.module_list, "list_modules 全字段");
-check("modules", py.modules, node.modules, "两个真实本 load_module 全字段（含 raw/warnings）");
+check("modules", py.modules, node.modules, "真实本与独立扩展夹具 load_module 全字段（含 raw/warnings）");
 check("new_games", py.new_games, node.new_games, "new_game 初始状态");
+check("rule_effects", py.rule_effects, node.rule_effects, "压力/冷静/受伤/束缚/恐惧 265 种边界组合");
+check("rule_tiers", py.rule_tiers, node.rule_tiers, "状态修正后的总值与结果档位");
+check("upgrade_costs", py.upgrade_costs, node.upgrade_costs, "逐级累计成长费用 72 种组合");
 check("patch_runs", py.patch_runs, node.patch_runs, "applyPatch 全键序列：变更说明 + 状态 + 摘要");
 check("edit_runs", py.edit_runs, node.edit_runs, "applyEdit 22 个 op 序列：结果 + 状态 + 摘要");
 check("normalize_runs", py.normalize_runs, node.normalize_runs, "normalize 清洗分支 + 清洗后再打补丁");
@@ -890,7 +947,7 @@ check("load_errors", py.load_errors, {
 
 // 覆盖度自检：保证上面的深比较不是拿空数据在比
 const gg = py.modules.gangcheng;
-const lm = py.modules["lvmao-yinqi-diyu"];
+const lm = py.modules["parity-rules"];
 checkTrue(
   "coverage_sanity",
   gg.locations.length >= 3 && gg.routes.length >= 2 && gg.characters.length >= 2 && gg.events.length >= 2
@@ -901,13 +958,13 @@ checkTrue(
     && lm.events.some((e) => e.special) && lm.routes.some((r) => r.time_slots !== null)
     && lm.player_name === "沈亦舟"
     && py.dice.tier_indices.length === 36 * 41 * 21
-    && py.patch_runs.lvmao.changes.length === PATCHES_LVMAO.length
-    && py.patch_runs.lvmao.changes.every((c) => c.length > 0)
-    && py.edit_runs.lvmao.results.length === OPS_LVMAO.length
+    && py.patch_runs.extended.changes.length === PATCHES_EXTENDED.length
+    && py.patch_runs.extended.changes.every((c) => c.length > 0)
+    && py.edit_runs.extended.results.length === OPS_EXTENDED.length
     && py.normalize_runs.messy.before.periods.length === 4
     && py.normalize_runs.messy.before.relations.length === 1
     && py.normalize_runs.messy.before.clocks.length === 1,
-  "fixture 覆盖两个真实本全部结构且数据非空",
+  "fixture 覆盖真实本与独立扩展夹具全部结构且数据非空",
 );
 
 // fuzz 覆盖度：确认伪随机序列真的打到了大量分支

@@ -118,6 +118,7 @@ watch(
           写下你要做的事，GM 会接住它。<br />
           规则判定由系统真掷骰，状态与线索会同步到右侧面板。
         </p>
+        <p v-else-if="game.loading" class="ph-sub">正在载入存档，请稍候。</p>
         <p v-else class="ph-sub">左侧「＋ 新建存档」开一档，就能开始了。</p>
       </div>
 
@@ -179,11 +180,11 @@ watch(
         class="box"
         rows="2"
         :disabled="!game.loaded"
-        :placeholder="game.loaded ? '写下你要做的事……（Enter 发送 / Shift+Enter 换行）' : '先在左侧开一档存档'"
+        :placeholder="game.loading ? '正在同步存档，请稍候……' : game.loaded ? '写下你要做的事……（Enter 发送 / Shift+Enter 换行）' : game.lastError ? '请在左侧重新载入存档' : '先在左侧开一档存档'"
         @keydown="onKeydown"
       />
       <div class="composer-side">
-        <button v-if="game.busy" class="stop" @click="abortTurn">中止</button>
+        <button v-if="game.turnStreaming" class="stop" title="停止接收剧情，服务器完成结算后会同步存档" @click="abortTurn">停止显示</button>
         <button v-else class="send" :disabled="!canSubmit" @click="submit">行动</button>
       </div>
     </div>

@@ -14,7 +14,7 @@ async function pickModule(dir) {
   if (dir === game.module) return;
   if (game.busy) {
     // 回合还在流式接收：此时切本会先 clearStream()，随后旧本的 state 事件
-    // 又会把旧存档盖到新本面板上。等回合结束（或先中止）再切。
+    // 又会把旧存档盖到新本面板上。等回合完成并同步存档后再切。
     notify("回合进行中，等这一回合结束再切本", "warn");
     return;
   }
@@ -37,6 +37,10 @@ function pickSlot(slot) {
 }
 
 function startCreate(slot) {
+  if (game.busy || game.loading) {
+    notify("正在处理当前存档，请等待完成后再新建", "warn");
+    return;
+  }
   newSlot.value = slot || freeSlot.value;
   characterName.value = "";
   creating.value = true;
@@ -106,7 +110,7 @@ function slotSummary(s) {
       </section>
 
       <section class="block foot">
-        <button class="primary-btn" :disabled="!game.module" @click="startCreate(freeSlot)">＋ 新建存档</button>
+        <button class="primary-btn" :disabled="!game.module || game.busy || game.loading" @click="startCreate(freeSlot)">＋ 新建存档</button>
         <button
           class="ghost-btn"
           :disabled="!game.module"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "加载 RPG 本"
+  short_description: "加载本项目的冒险本与存档，按对应规则主持剧情、真实掷骰并保存游戏进度"
+  default_prompt: "使用 $rpg-load，加载我指定的 RPG 本，并从当前存档继续文字冒险。"

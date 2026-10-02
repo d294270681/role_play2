@@ -86,7 +86,7 @@ export const api = {
 
   /**
    * 一个 GM 回合（SSE）。POST + text/event-stream，用 fetch 读流，
-   * 逐条吐出后端事件：narrative / dice / state / note / image / done / error。
+   * 逐条吐出后端事件：started / narrative / dice / state / note / image / done / error。
    */
   async *streamTurn(module, slot, action, history, signal) {
     let res;
@@ -114,33 +114,39 @@ export const api = {
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buf = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf("\n\n")) >= 0) {
-        const chunk = buf.slice(0, idx);
-        buf = buf.slice(idx + 2);
-        for (const line of chunk.split("\n")) {
-          if (!line.startsWith("data:")) continue;
-          const payload = line.slice(5).trim();
-          if (!payload) continue;
-          try {
-            yield JSON.parse(payload);
-          } catch {
-            /* 半包或非 JSON 心跳：跳过 */
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const chunk = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          for (const line of chunk.split("\n")) {
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload) continue;
+            try {
+              yield JSON.parse(payload);
+            } catch {
+              /* 半包或非 JSON 心跳：跳过 */
+            }
           }
         }
       }
-    }
-    const tail = buf.trim();
-    if (tail.startsWith("data:")) {
-      try {
-        yield JSON.parse(tail.slice(5).trim());
-      } catch {
-        /* 忽略残包 */
+      const tail = buf.trim();
+      if (tail.startsWith("data:")) {
+        try {
+          yield JSON.parse(tail.slice(5).trim());
+        } catch {
+          /* 忽略残包 */
+        }
       }
+    } finally {
+      // 消费方收到 done 后会提前结束迭代，也必须释放响应流。
+      try { await reader.cancel(); } catch { /* 连接可能已被 AbortController 关闭 */ }
+      reader.releaseLock();
     }
   },
 };

@@ -1,0 +1,4 @@
+interface:
+  display_name: "创建 RPG 本"
+  short_description: "按本项目规范创建世界观、地图、角色卡、事件牌及初始存档的新 RPG 本"
+  default_prompt: "使用 $rpg-create，根据我的构想在当前项目的 modules/ 下创建一个新的 RPG 本。"

@@ -77,7 +77,7 @@ async function addStatus() {
   if (await applyEdit({ op: "add_status", text: s })) newStatus.value = "";
 }
 
-// 经验加点（core §6.2：技能 N 级花 N×3，属性 N 点花 N×5，新特质 6）
+// 经验加点：跳级逐级累计，费用与后端 core §6.2 一致。
 const xpKind = ref("skill");
 const xpName = ref("");
 const xpTarget = ref(1);
@@ -90,14 +90,22 @@ const xpTargets = computed(() => {
 
 const xpCost = computed(() => {
   const to = Number(xpTarget.value) || 0;
-  if (xpKind.value === "skill") return to * 3;
-  if (xpKind.value === "attr") return to * 5;
+  if (xpKind.value === "skill" || xpKind.value === "attr") {
+    const from = xpKind.value === "skill" ? skillValue(xpName.value) : attrValue(xpName.value);
+    return to > from ? ((from + 1 + to) * (to - from) / 2) * (xpKind.value === "skill" ? 3 : 5) : 0;
+  }
   return 6;
 });
 
 watch(xpKind, () => {
   xpName.value = "";
   xpTarget.value = 1;
+});
+
+watch(xpName, (name) => {
+  if (!name || xpKind.value === "trait") return;
+  const current = xpKind.value === "skill" ? skillValue(name) : attrValue(name);
+  xpTarget.value = Math.min(current + 1, xpKind.value === "skill" ? 3 : 5);
 });
 
 async function spend() {
@@ -289,11 +297,11 @@ async function makePortrait() {
           :max="xpKind === 'attr' ? 5 : 3"
           style="width: 66px"
         />
-        <n-button size="small" type="primary" :disabled="!xpName" @click="spend">
+        <n-button size="small" type="primary" :disabled="!xpName || xpCost <= 0 || xpCost > xp" @click="spend">
           花 {{ xpCost }}
         </n-button>
       </div>
-      <p class="hint">技能升到 N 级花 N×3，属性升到 N 点花 N×5，新特质 6 点。</p>
+      <p class="hint">技能每级 N×3，属性每级 N×5；跳级逐级累计，新特质 6 点。请在安全休整点成长。</p>
     </section>
   </template>
 </template>
