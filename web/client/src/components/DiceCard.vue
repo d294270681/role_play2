@@ -12,12 +12,25 @@ const SPIN_STEP = 55;
 
 const spinning = ref(true);
 const faces = ref((props.result.dice || []).map(() => 1));
+const pipPositions = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
+};
 
 let timer = null;
 let stop = null;
 
 onMounted(() => {
   const real = props.result.dice || [];
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+    faces.value = real.slice();
+    spinning.value = false;
+    return;
+  }
   const started = Date.now();
   timer = setInterval(() => {
     faces.value = real.map(() => 1 + Math.floor(Math.random() * 6));
@@ -28,7 +41,7 @@ onMounted(() => {
       spinning.value = false;
     }
   }, SPIN_STEP);
-  stop = setTimeout(() => spinning.value = false, SPIN_MS + 120);
+  stop = setTimeout(() => (spinning.value = false), SPIN_MS + 120);
 });
 
 onBeforeUnmount(() => {
@@ -51,20 +64,32 @@ const keptFlags = computed(() => {
   });
 });
 
-const meta = computed(() => tierMeta(props.result.tier, props.result.tier_index));
+const meta = computed(() =>
+  tierMeta(props.result.tier, props.result.tier_index),
+);
 const total = computed(() => Number(props.result.total) || 0);
 const difficulty = computed(() => Number(props.result.difficulty) || 0);
 const margin = computed(() => total.value - difficulty.value);
 const difficultyName = computed(
-  () => props.result.difficulty_name || DIFFICULTY_NAMES[difficulty.value] || `难度 ${difficulty.value}`,
+  () =>
+    props.result.difficulty_name ||
+    DIFFICULTY_NAMES[difficulty.value] ||
+    `难度 ${difficulty.value}`,
 );
 </script>
 
 <template>
-  <div class="dice-card" :style="{ '--tier': meta.color, '--tier-glow': meta.glow }">
+  <div
+    class="dice-card"
+    :style="{ '--tier': meta.color, '--tier-glow': meta.glow }"
+  >
     <div class="head">
       <span class="badge">判定</span>
-      <span class="reason">{{ result.reason || `${result.attr_name || ""}${result.skill_name || ""}`.trim() || "一次判定" }}</span>
+      <span class="reason">{{
+        result.reason ||
+        `${result.attr_name || ""}${result.skill_name || ""}`.trim() ||
+        "一次判定"
+      }}</span>
     </div>
 
     <div class="faces" :class="{ spinning }">
@@ -72,33 +97,81 @@ const difficultyName = computed(
         v-for="(face, i) in faces"
         :key="i"
         class="die"
-        :class="{ kept: !spinning && keptFlags[i], dropped: !spinning && !keptFlags[i] }"
+        :class="{
+          kept: !spinning && keptFlags[i],
+          dropped: !spinning && !keptFlags[i],
+        }"
+        role="img"
+        :aria-label="
+          '骰子 ' +
+          face +
+          ' 点' +
+          (!spinning && !keptFlags[i] ? '，未计入' : '')
+        "
       >
-        <span class="pip">{{ face }}</span>
+        <span class="pip-grid"
+          ><i
+            v-for="position in 9"
+            :key="position"
+            class="pip-dot"
+            :class="{ lit: pipPositions[face]?.includes(position - 1) }"
+          ></i
+        ></span>
+        <span class="die-number">{{ face }}</span>
       </div>
     </div>
 
     <div class="math">
-      <span class="atom"><i>骰面</i>{{ (result.dice || []).join(" + ") }}<em>取 {{ (result.kept || []).join("、") }}（{{ result.mode || "普通" }}）</em></span>
-      <span class="atom"><i>加值</i>{{ result.attr_name }} {{ result.attr }} + {{ result.skill_name }} {{ result.skill }} + {{ signed(result.modifier) }}<template v-if="result.rule_modifier"> + 状态 {{ signed(result.rule_modifier) }}</template><em>= {{ result.bonus }}</em></span>
+      <span class="atom"
+        ><i>骰面</i>{{ (result.dice || []).join(" + ")
+        }}<em
+          >取 {{ (result.kept || []).join("、") }}（{{
+            result.mode || "普通"
+          }}）</em
+        ></span
+      >
+      <span class="atom"
+        ><i>加值</i>{{ result.attr_name }} {{ result.attr }} +
+        {{ result.skill_name }} {{ result.skill }} + {{ signed(result.modifier)
+        }}<template v-if="result.rule_modifier">
+          + 状态 {{ signed(result.rule_modifier) }}</template
+        ><em>= {{ result.bonus }}</em></span
+      >
     </div>
 
     <div class="verdict">
       <div class="total">
-        <span class="num">{{ (result.base ?? 0) }}<em>骰</em> + <span class="num">{{ result.bonus ?? 0 }}<em>加值</em></span> = </span>
+        <span class="num"
+          >{{ result.base ?? 0 }}<em>骰</em> +
+          <span class="num">{{ result.bonus ?? 0 }}<em>加值</em></span> =
+        </span>
         <span class="num big">{{ total }}</span>
-        <span class="vs">对难度 {{ difficulty }}<em>{{ difficultyName }}</em></span>
+        <span class="vs"
+          >对难度 {{ difficulty }}<em>{{ difficultyName }}</em></span
+        >
       </div>
       <div class="tier" :class="{ fail: !result.success }">
         {{ result.tier || meta.key }}
-        <span class="margin">{{ margin >= 0 ? "过 " + margin : "差 " + Math.abs(margin) }}</span>
+        <span class="margin">{{
+          margin >= 0 ? "过 " + margin : "差 " + Math.abs(margin)
+        }}</span>
       </div>
     </div>
 
     <div v-if="result.exertion" class="flag">全力以赴（精力 +2 加值）</div>
-    <div v-if="result.energy_cost" class="flag">消耗精力 {{ result.energy_cost }}</div>
-    <div v-for="effect in result.rule_modifiers || []" :key="effect.source" class="flag">{{ effect.source }} {{ signed(effect.value) }}</div>
-    <div v-if="result.disadvantage_sources?.length" class="flag">劣势来源：{{ result.disadvantage_sources.join('、') }}</div>
+    <div v-if="result.energy_cost" class="flag">
+      消耗精力 {{ result.energy_cost }}
+    </div>
+    <div
+      v-for="effect in result.rule_modifiers || []"
+      :key="effect.source"
+      class="flag"
+    >
+      {{ effect.source }} {{ signed(effect.value) }}
+    </div>
+    <div v-if="result.disadvantage_sources?.length" class="flag">
+      劣势来源：{{ result.disadvantage_sources.join("、") }}
+    </div>
   </div>
 </template>
 
@@ -108,13 +181,19 @@ const difficultyName = computed(
   border-radius: 12px;
   background: linear-gradient(160deg, #1b212a, #141922);
   padding: 13px 15px;
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45), inset 0 0 26px color-mix(in srgb, var(--tier) 8%, transparent);
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.45),
+    inset 0 0 26px color-mix(in srgb, var(--tier) 8%, transparent);
   display: flex;
   flex-direction: column;
   gap: 11px;
 }
 
-.head { display: flex; align-items: center; gap: 9px; }
+.head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
 .badge {
   font-size: 10.5px;
   letter-spacing: 0.16em;
@@ -125,17 +204,53 @@ const difficultyName = computed(
   background: color-mix(in srgb, var(--tier) 12%, transparent);
   flex-shrink: 0;
 }
-.reason { font-family: var(--serif); font-size: 13.5px; color: var(--text); }
+.reason {
+  font-family: var(--serif);
+  font-size: 13.5px;
+  color: var(--text);
+}
 
-.faces { display: flex; gap: 9px; }
+.faces {
+  display: flex;
+  gap: 9px;
+}
 .die {
-  width: 42px; height: 42px;
+  width: 48px;
+  height: 48px;
   border-radius: 9px;
-  display: grid; place-items: center;
+  display: grid;
+  place-items: center;
   background: #0e1218;
   border: 1px solid var(--line);
   box-shadow: inset 0 -2px 0 rgba(0, 0, 0, 0.5);
   transition: all 0.25s cubic-bezier(0.2, 0.8, 0.3, 1.2);
+  position: relative;
+}
+.pip-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 5px);
+  grid-template-rows: repeat(3, 5px);
+  gap: 4px;
+}
+.pip-dot {
+  border-radius: 50%;
+  background: transparent;
+}
+.pip-dot.lit {
+  background: var(--text-faint);
+}
+.die.kept .pip-dot.lit {
+  background: var(--tier);
+}
+.faces.spinning .pip-dot.lit {
+  background: var(--brass);
+}
+.die-number {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 7px;
+  color: var(--text-faint);
 }
 .die .pip {
   font-family: var(--serif);
@@ -147,23 +262,45 @@ const difficultyName = computed(
   border-color: var(--brass-dim);
   animation: tumble 0.28s ease-in-out infinite alternate;
 }
-.faces.spinning .die:nth-child(2) { animation-delay: 0.09s; }
-.faces.spinning .die:nth-child(3) { animation-delay: 0.18s; }
-.faces.spinning .die .pip { color: var(--brass); }
+.faces.spinning .die:nth-child(2) {
+  animation-delay: 0.09s;
+}
+.faces.spinning .die:nth-child(3) {
+  animation-delay: 0.18s;
+}
+.faces.spinning .die .pip {
+  color: var(--brass);
+}
 .die.kept {
   border-color: var(--tier);
   background: color-mix(in srgb, var(--tier) 14%, #0e1218);
-  box-shadow: 0 0 14px var(--tier-glow), inset 0 -2px 0 rgba(0, 0, 0, 0.4);
+  box-shadow:
+    0 0 14px var(--tier-glow),
+    inset 0 -2px 0 rgba(0, 0, 0, 0.4);
 }
-.die.kept .pip { color: var(--tier); }
-.die.dropped { opacity: 0.35; }
+.die.kept .pip {
+  color: var(--tier);
+}
+.die.dropped {
+  opacity: 0.35;
+}
 
 @keyframes tumble {
-  from { transform: translateY(0) rotate(-4deg); }
-  to { transform: translateY(-3px) rotate(4deg); }
+  from {
+    transform: translateY(0) rotate(-4deg);
+  }
+  to {
+    transform: translateY(-3px) rotate(4deg);
+  }
 }
 
-.math { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-dim); }
+.math {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
 .atom i {
   font-style: normal;
   color: var(--text-faint);
@@ -171,7 +308,11 @@ const difficultyName = computed(
   font-size: 11px;
   letter-spacing: 0.1em;
 }
-.atom em { font-style: normal; color: var(--text-faint); margin-left: 8px; }
+.atom em {
+  font-style: normal;
+  color: var(--text-faint);
+  margin-left: 8px;
+}
 
 .verdict {
   display: flex;
@@ -182,12 +323,41 @@ const difficultyName = computed(
   border-top: 1px dashed var(--line-soft);
   flex-wrap: wrap;
 }
-.total { display: flex; align-items: baseline; gap: 5px; font-size: 13px; color: var(--text-dim); }
-.total .num { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 600; }
-.total .num em { font-style: normal; font-size: 10.5px; color: var(--text-faint); margin-left: 2px; }
-.total .num.big { font-family: var(--serif); font-size: 25px; color: var(--tier); text-shadow: 0 0 16px var(--tier-glow); }
-.vs { display: flex; flex-direction: column; font-size: 11px; color: var(--text-faint); line-height: 1.3; }
-.vs em { font-style: normal; color: var(--text-dim); }
+.total {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.total .num {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  font-weight: 600;
+}
+.total .num em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  margin-left: 2px;
+}
+.total .num.big {
+  font-family: var(--serif);
+  font-size: 25px;
+  color: var(--tier);
+  text-shadow: 0 0 16px var(--tier-glow);
+}
+.vs {
+  display: flex;
+  flex-direction: column;
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.3;
+}
+.vs em {
+  font-style: normal;
+  color: var(--text-dim);
+}
 
 .tier {
   font-family: var(--serif);
@@ -199,8 +369,16 @@ const difficultyName = computed(
   align-items: center;
   gap: 8px;
 }
-.tier .margin { font-family: var(--sans); font-size: 11px; letter-spacing: 0; color: var(--text-faint); text-shadow: none; }
-.tier.fail { opacity: 0.95; }
+.tier .margin {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--text-faint);
+  text-shadow: none;
+}
+.tier.fail {
+  opacity: 0.95;
+}
 
 .flag {
   font-size: 11px;

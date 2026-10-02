@@ -1,36 +1,66 @@
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { darkTheme, dateZhCN, zhCN } from "naive-ui";
-
 import TopBar from "./components/TopBar.vue";
 import LeftSidebar from "./components/LeftSidebar.vue";
 import StoryStream from "./components/StoryStream.vue";
-import RightPanel from "./components/RightPanel.vue";
+import AdventureOverview from "./components/AdventureOverview.vue";
+import ResourceStrip from "./components/ResourceStrip.vue";
+import WorkspacePanel from "./components/WorkspacePanel.vue";
 import SettingsModal from "./components/SettingsModal.vue";
+import SessionManager from "./components/SessionManager.vue";
 import Lightbox from "./components/Lightbox.vue";
-
+import Icon from "./components/Icon.vue";
 import { themeOverrides } from "./theme.js";
-import { bootstrap, dismissToast, game, skipTyping } from "./store.js";
+import {
+  bootstrap,
+  dismissToast,
+  game,
+  navigate,
+  skipTyping,
+} from "./store.js";
+import { VIEWS, viewInfo } from "./ui.js";
 
-const booting = ref(true);
-const bootError = ref("");
-
-onMounted(async () => {
+const booting = ref(true),
+  bootError = ref("");
+const view = computed(() => viewInfo(game.view));
+async function connect() {
+  booting.value = true;
+  bootError.value = "";
   try {
     await bootstrap();
+    if (!game.config && !game.modules.length && game.lastError)
+      bootError.value = game.lastError;
   } catch (e) {
-    bootError.value = e?.message ?? String(e);
+    bootError.value = e?.message || String(e);
   } finally {
     booting.value = false;
   }
+}
+function onKey(event) {
+  if (event.key === "Escape") game.mobileNav = false;
+  if (
+    !event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    game.settingsOpen ||
+    game.sessionsOpen
+  )
+    return;
+  const index = Number(event.key) - 1;
+  if (index >= 0 && index < VIEWS.length) {
+    event.preventDefault();
+    navigate(VIEWS[index].key);
+  }
+}
+onMounted(() => {
+  void connect();
+  window.addEventListener("keydown", onKey);
 });
-
-const demoMode = computed(() => Boolean(game.echo));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>
-  <!-- abstract：不渲染包装元素。默认会多出一层无高度的 div.n-config-provider，
-       打断 html/body/#app 的 100% 高度链，.app-shell 会塌成内容高、被 overflow:hidden 裁掉。 -->
   <n-config-provider
     abstract
     :theme="darkTheme"
@@ -38,52 +68,112 @@ const demoMode = computed(() => Boolean(game.echo));
     :locale="zhCN"
     :date-locale="dateZhCN"
   >
-    <div class="app-shell">
+    <div
+      class="app-shell"
+      :class="{ 'nav-compact': game.leftCollapsed, 'nav-open': game.mobileNav }"
+    >
+      <a class="skip-link" href="#workspace">跳到工作区</a>
       <TopBar />
-
-      <div v-if="demoMode" class="demo-banner">
-        <span class="dot" />
-        <b>{{ game.config?.llm_mode === 'demo' ? '演示模式' : '文字模型未配置' }}</b>
-        <span class="sep">·</span>
-        当前使用本地示例叙述，判定与存档功能正常。可在设置中选择模型服务并保存 API 配置。
-        <button class="link" @click="game.settingsOpen = true">去设置 →</button>
+      <div class="app-body">
+        <button
+          v-if="game.mobileNav"
+          class="nav-backdrop"
+          aria-label="关闭导航"
+          @click="game.mobileNav = false"
+        ></button>
+        <LeftSidebar />
+        <main id="workspace" class="workspace" tabindex="-1">
+          <div class="workspace-heading">
+            <div>
+              <div class="eyebrow">
+                {{ game.loaded ? "旅程进行中" : "你的冒险工作台"
+                }}<span v-if="game.loaded"> · 存档 {{ game.slot }}</span>
+              </div>
+              <h1>
+                {{ view.label
+                }}<span v-if="view.upcoming" class="tag subtle">准备阶段</span>
+              </h1>
+              <p>{{ view.caption }}</p>
+            </div>
+            <div class="workspace-actions">
+              <span v-if="game.busy" class="sync-status" role="status"
+                ><span class="status-dot working"></span
+                >{{ game.turnStreaming ? "故事正在展开" : "同步存档中" }}</span
+              >
+              <button
+                v-if="game.view === 'adventure'"
+                class="secondary-button focus-button"
+                :aria-pressed="game.rightCollapsed"
+                @click="game.rightCollapsed = !game.rightCollapsed"
+              >
+                <Icon name="book" :size="15" />{{
+                  game.rightCollapsed ? "显示状态摘要" : "专注阅读"
+                }}
+              </button>
+              <button
+                v-else
+                class="secondary-button"
+                @click="navigate('adventure')"
+              >
+                <Icon name="compass" :size="15" />返回冒险
+              </button>
+            </div>
+          </div>
+          <div v-if="game.echo" class="model-notice">
+            <span class="status-dot"></span
+            ><b>{{
+              game.config?.llm_mode === "demo" ? "演示模式" : "文字模型未配置"
+            }}</b
+            ><span>当前使用示例叙述，判定与存档正常。</span
+            ><button class="text-button" @click="game.settingsOpen = true">
+              配置模型<Icon name="arrow" :size="14" />
+            </button>
+          </div>
+          <ResourceStrip />
+          <div class="workspace-content">
+            <div
+              v-show="game.view === 'adventure'"
+              class="adventure-columns"
+              :class="{ focused: game.rightCollapsed }"
+            >
+              <StoryStream @skip="skipTyping" />
+              <AdventureOverview v-if="!game.rightCollapsed && game.loaded" />
+            </div>
+            <WorkspacePanel v-if="game.view !== 'adventure'" />
+          </div>
+        </main>
       </div>
-
-      <main class="app-body">
-        <LeftSidebar class="col-left" :class="{ collapsed: game.leftCollapsed }" />
-        <StoryStream class="col-center" @skip="skipTyping" />
-        <RightPanel class="col-right" :class="{ collapsed: game.rightCollapsed }" />
-      </main>
-
-      <!-- 全局浮层 -->
       <SettingsModal v-model:show="game.settingsOpen" />
+      <SessionManager />
       <Lightbox
         v-if="game.lightbox"
         :src="game.lightbox.url"
         :prompt="game.lightbox.prompt"
         @close="game.lightbox = null"
       />
-
-      <div class="toast-stack">
-        <div
-          v-for="t in game.toasts"
-          :key="t.id"
+      <div class="toast-stack" aria-live="polite">
+        <button
+          v-for="toast in game.toasts"
+          :key="toast.id"
           class="toast"
-          :class="`toast-${t.level}`"
-          role="status"
-          @click="dismissToast(t.id)"
+          :class="'toast-' + toast.level"
+          @click="dismissToast(toast.id)"
         >
-          {{ t.text }}
-        </div>
+          <Icon
+            :name="toast.level === 'success' ? 'check' : 'activity'"
+            :size="16"
+          /><span>{{ toast.text }}</span
+          ><Icon name="close" :size="12" />
+        </button>
       </div>
-
-      <div v-if="booting" class="boot-mask">
-        <div class="boot-inner">正在连接跑团台…</div>
-      </div>
-      <div v-else-if="bootError" class="boot-mask">
+      <div v-if="booting || bootError" class="boot-mask">
         <div class="boot-inner">
-          <b>后端连接失败</b>
-          <p>{{ bootError }}</p>
+          <Icon name="compass" :size="38" />
+          <h2>{{ bootError ? "暂时无法连接游戏" : "正在展开你的旅程" }}</h2>
+          <p>{{ bootError || "读取冒险本与存档…" }}</p>
+          <button v-if="bootError" class="primary-button" @click="connect">
+            重新连接
+          </button>
         </div>
       </div>
     </div>
@@ -95,115 +185,246 @@ const demoMode = computed(() => Boolean(game.echo));
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(1200px 600px at 50% -10%, #16202c 0%, var(--ink-900) 60%);
   overflow: hidden;
+  background: var(--ink-900);
 }
-
-.demo-banner {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px;
-  font-size: 12.5px;
-  color: #e6c98a;
-  background: linear-gradient(90deg, rgba(212, 169, 74, 0.16), rgba(212, 169, 74, 0.04));
-  border-bottom: 1px solid rgba(212, 169, 74, 0.25);
-}
-.demo-banner .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--brass);
-  box-shadow: 0 0 8px var(--brass);
-}
-.demo-banner .sep {
-  opacity: 0.5;
-}
-.demo-banner .link {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--brass);
-  cursor: pointer;
-  font: inherit;
-  font-weight: 600;
-}
-
 .app-body {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 244px minmax(0, 1fr) 372px;
-  gap: 0;
 }
-.app-body > * {
+.nav-compact .app-body {
+  grid-template-columns: 74px minmax(0, 1fr);
+}
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px 28px 22px;
   min-width: 0;
   min-height: 0;
+  outline: none;
 }
-
-.col-left {
-  border-right: 1px solid var(--line-soft);
-  background: rgba(17, 21, 27, 0.7);
-  overflow: hidden;
-  transition: width 0.2s ease;
+.workspace-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
 }
-.col-right {
-  border-left: 1px solid var(--line-soft);
-  background: rgba(17, 21, 27, 0.7);
-  overflow: hidden;
+.eyebrow {
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.08em;
 }
-
+h1 {
+  font-size: 27px;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  margin: 4px 0;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.workspace-heading p {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 0;
+}
+.workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: var(--brass);
+  white-space: nowrap;
+}
+.model-notice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  padding: 9px 13px;
+  color: var(--text-dim);
+  background: var(--brass-wash);
+  border: 1px solid #bfa26430;
+  border-radius: 9px;
+}
+.model-notice b {
+  font-weight: 500;
+  color: var(--brass);
+}
+.model-notice > .text-button {
+  margin-left: auto;
+  white-space: nowrap;
+}
+.workspace-content {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+.adventure-columns {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 20px;
+}
+.adventure-columns.focused,
+.adventure-columns:not(:has(.overview)) {
+  grid-template-columns: minmax(0, 1fr);
+}
 .toast-stack {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: 24px;
+  bottom: 22px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  z-index: 3000;
-  max-width: 380px;
+  max-width: min(420px, calc(100vw - 32px));
+  z-index: 4000;
 }
 .toast {
-  padding: 9px 13px;
-  border-radius: 9px;
-  font-size: 12.5px;
-  line-height: 1.55;
-  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  border: 1px solid var(--line-bright);
+  background: var(--ink-740);
+  color: var(--text);
+  padding: 12px 14px;
+  border-radius: 10px;
   box-shadow: var(--shadow-lift);
-  border: 1px solid var(--line);
-  background: #1a2028;
-  animation: toast-in 0.22s ease;
+  font-size: 12px;
 }
-.toast-success { border-color: rgba(111, 169, 107, 0.5); color: #b6dbb1; }
-.toast-warn { border-color: rgba(217, 139, 58, 0.5); color: #eec48c; }
-.toast-error { border-color: rgba(194, 80, 76, 0.55); color: #e8a3a0; }
-
-@keyframes toast-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: none; }
+.toast > span {
+  flex: 1;
 }
-
+.toast-success > svg:first-child {
+  color: var(--moss);
+}
+.toast-warn {
+  border-color: #dfad6550;
+}
+.toast-error {
+  border-color: #df8a8050;
+}
+.toast-error > svg:first-child {
+  color: var(--blood);
+}
 .boot-mask {
   position: fixed;
   inset: 0;
-  background: rgba(9, 11, 14, 0.92);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 4000;
+  background: #0c1215f5;
+  display: grid;
+  place-items: center;
+  z-index: 5000;
+  padding: 24px;
 }
 .boot-inner {
+  max-width: 500px;
   text-align: center;
+}
+.boot-inner > svg {
+  color: var(--brass);
+}
+.boot-inner h2 {
+  font-size: 20px;
+}
+.boot-inner p {
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.9;
 }
-.boot-inner p {
-  max-width: 30rem;
-  color: var(--text-faint);
+.boot-inner > .primary-button {
+  margin: 18px auto 0;
 }
-
-@media (max-width: 1280px) {
-  .app-body { grid-template-columns: 210px minmax(0, 1fr) 320px; }
+.nav-backdrop {
+  display: none;
+}
+@media (min-width: 1700px) {
+  .workspace {
+    padding: 28px 38px;
+  }
+  .adventure-columns {
+    grid-template-columns: minmax(0, 1fr) 340px;
+    gap: 24px;
+  }
+}
+@media (max-width: 1200px) {
+  .app-body {
+    grid-template-columns: 194px minmax(0, 1fr);
+  }
+  .workspace {
+    padding: 20px;
+    gap: 16px;
+  }
+  .adventure-columns {
+    grid-template-columns: minmax(0, 1fr) 270px;
+    gap: 14px;
+  }
+}
+@media (max-width: 1000px) {
+  .app-body,
+  .nav-compact .app-body {
+    grid-template-columns: 1fr;
+  }
+  .adventure-columns {
+    grid-template-columns: 1fr;
+  }
+  .adventure-columns > .overview {
+    display: none;
+  }
+  .focus-button {
+    display: none;
+  }
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 64px 0 0;
+    z-index: 90;
+    background: #0009;
+    border: 0;
+  }
+  .workspace {
+    padding: 18px 22px;
+  }
+}
+@media (max-width: 650px) {
+  .workspace {
+    padding: 16px 12px 12px;
+    gap: 12px;
+  }
+  h1 {
+    font-size: 23px;
+  }
+  .workspace-heading p {
+    font-size: 11px;
+  }
+  .workspace-actions > .sync-status {
+    display: none;
+  }
+  .workspace-actions > .secondary-button {
+    font-size: 11px;
+    padding: 8px;
+  }
+  .model-notice {
+    flex-wrap: wrap;
+    font-size: 11px;
+    gap: 7px;
+  }
+  .model-notice > span:not(.status-dot) {
+    display: none;
+  }
+  .toast-stack {
+    right: 12px;
+    bottom: 12px;
+  }
 }
 </style>

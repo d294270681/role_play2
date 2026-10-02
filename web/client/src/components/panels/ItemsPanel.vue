@@ -1,131 +1,411 @@
 <script setup>
 import { computed, ref } from "vue";
-
+import Icon from "../Icon.vue";
 import { applyEdit, game } from "../../store.js";
-
-const inv = computed(() => game.state?.inventory || []);
-const funds = computed(() => Number(game.state?.funds) || 0);
-const capacity = computed(() => Number(game.state?.character?.capacity) || 0);
-const usedSlots = computed(() => inv.value.reduce((sum, it) => sum + (Number(it.slots) || 0) * (Number(it.qty) || 1), 0));
-
-const newItem = ref({ name: "", qty: 1, slots: 1, note: "" });
-const showAdd = ref(false);
-
+import { inventoryLoad } from "../../ui.js";
+const inventory = computed(() => game.state?.inventory || []),
+  funds = computed(() => Number(game.state?.funds) || 0);
+const capacity = computed(() => Number(game.state?.character?.capacity) || 0),
+  used = computed(() => inventoryLoad(inventory.value));
+const query = ref(""),
+  editing = ref(false),
+  showAdd = ref(false);
+const filtered = computed(() =>
+  inventory.value.filter((item) =>
+    (item.name + " " + (item.note || ""))
+      .toLowerCase()
+      .includes(query.value.trim().toLowerCase()),
+  ),
+);
+const draft = ref({ name: "", qty: 1, slots: 1, note: "" });
 async function add() {
-  const name = newItem.value.name.trim();
-  if (!name) return;
-  const ok = await applyEdit({
-    op: "add_item",
-    name,
-    qty: Number(newItem.value.qty) || 1,
-    slots: Number(newItem.value.slots) || 1,
-    note: newItem.value.note.trim(),
-  });
-  if (ok) {
-    newItem.value = { name: "", qty: 1, slots: 1, note: "" };
+  if (!draft.value.name.trim()) return;
+  if (
+    await applyEdit({
+      op: "add_item",
+      name: draft.value.name.trim(),
+      qty: Number(draft.value.qty) || 1,
+      slots: Number(draft.value.slots) || 1,
+      note: draft.value.note.trim(),
+    })
+  ) {
+    draft.value = { name: "", qty: 1, slots: 1, note: "" };
     showAdd.value = false;
   }
 }
-
-const setQty = (name, qty) => applyEdit({ op: "set_item_qty", name, qty: Number(qty) || 0 });
-const remove = (name) => applyEdit({ op: "remove_item", name });
+const iconFor = (name) =>
+  /棍|剑|刀|枪|弓/.test(name)
+    ? "swords"
+    : /本|信|证|图/.test(name)
+      ? "book"
+      : "backpack";
 </script>
-
 <template>
-  <div v-if="!game.loaded" class="empty-hint">还没有载入存档。</div>
-
+  <div v-if="!game.loaded" class="empty-hint">
+    载入角色后，随身物品与资金会显示在这里。
+  </div>
   <template v-else>
-    <section class="card">
-      <h4 class="section-label">资金</h4>
-      <div class="funds-row">
-        <span class="funds-n">{{ funds }}</span>
+    <div class="inventory-stats">
+      <section class="card funds-card">
+        <Icon name="coin" :size="28" />
+        <div>
+          <span>可用资金</span><b>{{ funds }}</b>
+        </div>
         <n-input-number
+          v-if="editing"
           :value="funds"
-          size="small"
+          :disabled="game.busy"
           :min="0"
-          style="width: 110px"
-          @change="(v) => applyEdit({ op: 'set_funds', value: Number(v) || 0 })"
+          size="small"
+          style="width: 130px"
+          @change="
+            (value) => applyEdit({ op: 'set_funds', value: Number(value) || 0 })
+          "
+        />
+      </section>
+      <section class="card load-card">
+        <div>
+          <span>背包负重</span
+          ><b :class="{ over: used > capacity }"
+            >{{ used }}<small> / {{ capacity }} 格</small></b
+          >
+        </div>
+        <div class="load-track">
+          <i
+            :style="{
+              width: capacity
+                ? Math.min(100, (used / capacity) * 100) + '%'
+                : '0%',
+            }"
+            :class="{ over: used > capacity }"
+          ></i>
+        </div>
+        <span class="hint">{{
+          used > capacity
+            ? "已超出负重，请整理物品"
+            : "还有 " + Math.max(0, capacity - used) + " 格空间"
+        }}</span>
+      </section>
+    </div>
+    <div class="panel-toolbar inventory-toolbar">
+      <div class="search-field">
+        <Icon name="search" :size="15" /><input
+          v-model="query"
+          aria-label="搜索背包"
+          placeholder="搜索名称或备注…"
         />
       </div>
-      <div class="slots-row">
-        <span>占用格数</span>
-        <b :class="{ over: usedSlots > capacity }">{{ usedSlots }} / {{ capacity || "—" }}</b>
-        <div class="gauge-rail" style="flex: 1">
-          <div class="gauge-fill" :style="{ width: capacity ? Math.min(100, (usedSlots / capacity) * 100) + '%' : '0%' }" />
+      <div class="toolbar-buttons">
+        <button
+          class="secondary-button"
+          :aria-pressed="editing"
+          @click="editing = !editing"
+        >
+          {{ editing ? "完成管理" : "管理背包" }}</button
+        ><button
+          class="primary-button"
+          :disabled="game.busy"
+          @click="showAdd = true"
+        >
+          <Icon name="plus" :size="15" />添加物品
+        </button>
+      </div>
+    </div>
+    <div class="inventory-grid">
+      <article v-for="item in filtered" :key="item.name" class="item-card">
+        <div class="item-art">
+          <Icon :name="iconFor(item.name)" :size="32" /><span
+            class="item-quantity"
+            >×{{ item.qty ?? 1 }}</span
+          >
         </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="head-row">
-        <h4 class="section-label" style="margin: 0; flex: 1">背包（{{ inv.length }}）</h4>
-        <n-button size="tiny" type="primary" ghost @click="showAdd = !showAdd">
-          {{ showAdd ? "取消" : "＋ 添加" }}
-        </n-button>
-      </div>
-
-      <div v-if="showAdd" class="add-box">
-        <n-input v-model:value="newItem.name" size="small" placeholder="道具名" />
-        <div class="add-line">
-          <n-input-number v-model:value="newItem.qty" size="small" :min="1" style="width: 74px" placeholder="数量" />
-          <n-input-number v-model:value="newItem.slots" size="small" :min="1" style="width: 74px" placeholder="格" />
-          <n-input v-model:value="newItem.note" size="small" placeholder="备注" style="flex: 1" />
+        <div class="item-info">
+          <h3>{{ item.name }}</h3>
+          <p>{{ item.note || "暂无物品备注" }}</p>
+          <span class="tag subtle">每件 {{ item.slots || 0 }} 格</span>
         </div>
-        <n-button size="small" type="primary" block :disabled="!newItem.name.trim()" @click="add">加入背包</n-button>
+        <div v-if="editing" class="item-controls">
+          <n-input-number
+            :value="Number(item.qty) || 0"
+            :min="0"
+            :disabled="game.busy"
+            size="small"
+            @change="
+              (value) =>
+                applyEdit({
+                  op: 'set_item_qty',
+                  name: item.name,
+                  qty: Number(value) || 0,
+                })
+            "
+          /><button
+            class="icon-button remove-item"
+            :aria-label="'移除' + item.name"
+            :disabled="game.busy"
+            @click="applyEdit({ op: 'remove_item', name: item.name })"
+          >
+            <Icon name="close" :size="16" />
+          </button>
+        </div>
+      </article>
+      <div v-if="!filtered.length" class="empty-hint">
+        {{
+          query
+            ? "没有找到匹配的物品。"
+            : "背包还是空的。将获得的装备或道具添加到这里。"
+        }}
       </div>
-
-      <ul class="item-list">
-        <li v-for="it in inv" :key="it.name" class="item">
-          <div class="item-head">
-            <span class="i-name">{{ it.name }}</span>
-            <n-input-number
-              :value="Number(it.qty) || 0"
-              size="tiny"
-              :min="0"
-              style="width: 66px"
-              @change="(v) => setQty(it.name, v)"
-            />
-            <button class="mini" :title="`占用 ${it.slots} 格`">▦ {{ it.slots }}</button>
-            <button class="mini danger" title="移除" @click="remove(it.name)">✕</button>
+    </div>
+    <n-modal
+      v-model:show="showAdd"
+      preset="card"
+      title="添加物品"
+      style="max-width: 440px"
+      :bordered="false"
+      ><div class="item-form">
+        <label>物品名称</label
+        ><n-input v-model:value="draft.name" placeholder="例如：绳子" />
+        <div class="item-form-grid">
+          <div>
+            <label>数量</label
+            ><n-input-number v-model:value="draft.qty" :min="1" />
           </div>
-          <div v-if="it.note" class="i-note">{{ it.note }}</div>
-        </li>
-        <li v-if="!inv.length" class="empty-hint">背包是空的。</li>
-      </ul>
-    </section>
+          <div>
+            <label>每件占用格数</label
+            ><n-input-number v-model:value="draft.slots" :min="1" />
+          </div>
+        </div>
+        <label>备注</label
+        ><n-input
+          v-model:value="draft.note"
+          placeholder="携带位置、用途或其他备注"
+        />
+      </div>
+      <template #footer
+        ><div class="modal-actions">
+          <n-button @click="showAdd = false">取消</n-button
+          ><n-button
+            type="primary"
+            :disabled="!draft.name.trim() || game.busy"
+            @click="add"
+            >加入背包</n-button
+          >
+        </div></template
+      ></n-modal
+    >
   </template>
 </template>
-
 <style scoped>
-.card { display: flex; flex-direction: column; gap: 9px; }
-.head-row { display: flex; align-items: center; gap: 8px; }
-
-.funds-row { display: flex; align-items: center; justify-content: space-between; }
-.funds-n { font-family: var(--serif); font-size: 24px; color: var(--brass); font-variant-numeric: tabular-nums; }
-.slots-row { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-faint); }
-.slots-row b { color: var(--text-dim); font-variant-numeric: tabular-nums; }
-.slots-row b.over { color: var(--blood); }
-
-.add-box { display: flex; flex-direction: column; gap: 6px; padding: 9px; border: 1px dashed var(--line); border-radius: 9px; }
-.add-line { display: flex; gap: 6px; }
-
-.item-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-.item { padding: 6px 8px; border-radius: 8px; background: #161c24; border: 1px solid var(--line-soft); }
-.item-head { display: flex; align-items: center; gap: 6px; }
-.i-name { flex: 1; font-size: 12.5px; color: var(--text); }
-.i-note { font-size: 10.5px; color: var(--text-faint); margin-top: 3px; }
-
-.mini {
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 5px;
-  border: 1px solid var(--line);
-  background: #171c24;
-  color: var(--text-faint);
-  font-size: 10.5px;
-  cursor: pointer;
-  line-height: 1;
+.inventory-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 22px;
 }
-.mini:hover { color: var(--brass); border-color: var(--brass-dim); }
-.mini.danger:hover { color: var(--blood); border-color: rgba(194, 80, 76, 0.5); }
+.funds-card {
+  display: flex;
+  gap: 19px;
+  align-items: center;
+}
+.funds-card > svg {
+  color: var(--brass);
+}
+.funds-card > div {
+  flex: 1;
+}
+.funds-card span,
+.load-card > div > span {
+  display: block;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.funds-card b,
+.load-card b {
+  font-size: 29px;
+  font-weight: 600;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.funds-card b {
+  color: var(--brass);
+}
+.load-card b small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-faint);
+}
+.load-card > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.load-track {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--ink-950);
+  overflow: hidden;
+  margin: 8px 0 7px;
+}
+.load-track i {
+  height: 100%;
+  background: var(--moss);
+  display: block;
+}
+.load-track i.over {
+  background: var(--blood);
+}
+.over {
+  color: var(--blood);
+}
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 12px;
+  min-width: 0;
+  width: 310px;
+  background: var(--ink-860);
+  color: var(--text-faint);
+}
+.search-field input {
+  background: none;
+  border: 0;
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+  font-size: 12px;
+}
+.search-field input::placeholder {
+  color: var(--text-faint);
+}
+.search-field:focus-within {
+  border-color: var(--brass-dim);
+}
+.toolbar-buttons {
+  display: flex;
+  gap: 9px;
+}
+.inventory-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 15px;
+}
+.item-card {
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--ink-820);
+}
+.item-art {
+  height: 107px;
+  background: radial-gradient(ellipse at 50% 0, #2c3b37, var(--ink-820) 80%);
+  display: grid;
+  place-items: center;
+  color: #93ab9d;
+  position: relative;
+}
+.item-quantity {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: var(--text-dim);
+  font-size: 11px;
+  background: var(--ink-860);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.item-info {
+  padding: 15px 17px 18px;
+}
+.item-info h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 7px;
+}
+.item-info p {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0 0 12px;
+  line-height: 1.8;
+}
+.item-controls {
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+.item-controls > .n-input-number {
+  flex: 1;
+  min-width: 0;
+}
+.remove-item {
+  color: var(--blood);
+}
+.inventory-grid > .empty-hint {
+  grid-column: 1/-1;
+}
+.item-form {
+  display: grid;
+  gap: 9px;
+}
+.item-form label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.item-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 7px 0;
+}
+.item-form-grid label {
+  margin-bottom: 7px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+@media (max-width: 1400px) {
+  .inventory-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 900px) {
+  .inventory-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .inventory-stats {
+    gap: 12px;
+  }
+}
+@media (max-width: 650px) {
+  .inventory-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .inventory-stats {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .inventory-toolbar {
+    gap: 10px;
+  }
+  .search-field {
+    width: 100%;
+  }
+  .toolbar-buttons {
+    margin-left: auto;
+  }
+  .item-art {
+    height: 85px;
+  }
+  .item-info {
+    padding: 12px;
+  }
+}
 </style>

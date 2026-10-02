@@ -8,11 +8,14 @@
 
 本地图片生成功能默认关闭。用户在网页选择后，先检测硬件，达标再安装工程内的 Python、ComfyUI 和权重；生成图片时才启动模型。详细流程与目录说明见 [本地图片生成说明](ai/README.md)。
 
-| 内容 | 位置 |
-|---|---|
-| 用户环境与 API 配置 | [docs/环境配置指引.md](docs/环境配置指引.md) |
-| 无密钥配置示例 | [web/config.example.json](web/config.example.json) |
-| 网页 / 后端 | `web/client/src/` / `web/server/` |
-| 规则与冒险本 | `core/` / [modules/README.md](modules/README.md) |
-| 可选本地生图 | [ai/README.md](ai/README.md) |
-| 开发记录 | [PROGRESS.md](PROGRESS.md) |
+前端采用冒险工作台：左侧切换九个功能页，主区域可视化展示角色、地图、背包、进度、关系、线索与事件；战斗准备页汇总当前能力与资源，战斗回合待后续接入。界面操作与组件职责见 [前端界面与战斗扩展](docs/前端界面与战斗扩展.md)。
+
+| 内容                 | 位置                                                     |
+| -------------------- | -------------------------------------------------------- |
+| 用户环境与 API 配置  | [docs/环境配置指引.md](docs/环境配置指引.md)             |
+| 可视化界面与战斗扩展 | [docs/前端界面与战斗扩展.md](docs/前端界面与战斗扩展.md) |
+| 无密钥配置示例       | [web/config.example.json](web/config.example.json)       |
+| 网页 / 后端          | `web/client/src/` / `web/server/`                        |
+| 规则与冒险本         | `core/` / [modules/README.md](modules/README.md)         |
+| 可选本地生图         | [ai/README.md](ai/README.md)                             |
+| 开发记录             | [PROGRESS.md](PROGRESS.md)                               |

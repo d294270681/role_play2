@@ -1,132 +1,401 @@
 <script setup>
 import { computed, ref } from "vue";
-
+import Icon from "../Icon.vue";
 import { game } from "../../store.js";
-
-const fired = computed(() => game.state?.events_fired || []);
-const pending = computed(() => game.state?.pending_event || null);
-const deck = computed(() => game.events || []);
+const fired = computed(() => game.state?.events_fired || []),
+  deck = computed(() => game.events || []);
 const log = computed(() => (game.state?.log || []).slice(-40).reverse());
-
-const showDeck = ref(false);
-const showLog = ref(false);
-const firedCodes = computed(() => new Set(fired.value.map((e) => String(e.code))));
-
-function typeClass(t) {
-  if (t === "事件") return "ev";
-  if (t === "移动") return "mv";
-  if (t === "行动") return "ac";
-  if (t === "叙事") return "nr";
-  return "ot";
-}
+const pending = computed(() => {
+  const events = [
+    ...(Array.isArray(game.state?.pending_events)
+      ? game.state.pending_events
+      : []),
+    game.state?.pending_event,
+  ].filter(Boolean);
+  return events.filter(
+    (event, index) =>
+      events.findIndex(
+        (other) => (other.code || other.name) === (event.code || event.name),
+      ) === index,
+  );
+});
+const showDeck = ref(false),
+  showLog = ref(true),
+  query = ref("");
+const firedCodes = computed(
+  () => new Set(fired.value.map((event) => String(event.code))),
+);
+const filteredDeck = computed(() =>
+  deck.value.filter((event) =>
+    (event.code + " " + event.name).includes(query.value.trim()),
+  ),
+);
+const logIcon = (type) =>
+  type === "移动"
+    ? "map"
+    : type === "事件"
+      ? "activity"
+      : type === "行动"
+        ? "compass"
+        : "book";
 </script>
-
 <template>
-  <div v-if="!game.loaded" class="empty-hint">还没有载入存档。</div>
-
+  <div v-if="!game.loaded" class="empty-hint">
+    冒险事件、地点移动与故事记录会沿时间线排列在这里。
+  </div>
   <template v-else>
-    <section v-if="pending && (pending.code || pending.name)" class="card pending">
-      <h4 class="section-label">待处理事件</h4>
-      <div class="p-line">
-        <span class="p-code">{{ pending.code }}</span>
-        <span class="p-name">{{ pending.name }}</span>
+    <div class="event-stats">
+      <div>
+        <Icon name="activity" :size="22" /><span
+          ><b>{{ pending.length }}</b
+          >待处理事件</span
+        >
       </div>
-      <p class="hint">GM 会在下一回合把这条事件演进叙事，处理完自动清除。</p>
-    </section>
-
-    <section class="card">
-      <h4 class="section-label">已触发事件（{{ fired.length }}）</h4>
-      <ul class="ev-list">
-        <li v-for="(e, i) in fired" :key="`${e.code}-${i}`" class="ev">
-          <span class="e-code">{{ e.code }}</span>
-          <span class="e-name">{{ e.name }}</span>
-          <span class="e-day">第 {{ e.day }} 天</span>
-        </li>
-        <li v-if="!fired.length" class="empty-hint">还没有触发过事件牌。</li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <div class="head-row">
-        <h4 class="section-label" style="margin: 0; flex: 1">本册事件牌（{{ deck.length }}）</h4>
-        <n-button size="tiny" quaternary @click="showDeck = !showDeck">
-          {{ showDeck ? "收起" : "展开" }}
-        </n-button>
+      <div>
+        <Icon name="check" :size="22" /><span
+          ><b>{{ fired.length }}</b
+          >已触发事件</span
+        >
       </div>
-      <ul v-if="showDeck" class="deck">
-        <li v-for="e in deck" :key="`${e.code}-${e.name}`" :class="{ used: firedCodes.has(String(e.code)) }">
-          <span class="d-code">{{ e.code }}</span>
-          <span class="d-name">{{ e.name }}</span>
-          <span v-if="firedCodes.has(String(e.code))" class="d-used">已用</span>
-          <span v-else-if="e.special" class="d-spec">特殊</span>
-        </li>
-      </ul>
-    </section>
-
-    <section class="card">
-      <div class="head-row">
-        <h4 class="section-label" style="margin: 0; flex: 1">冒险日志（{{ game.state?.log?.length || 0 }}）</h4>
-        <n-button size="tiny" quaternary @click="showLog = !showLog">
-          {{ showLog ? "收起" : "展开" }}
-        </n-button>
+      <div>
+        <Icon name="book" :size="22" /><span
+          ><b>{{ game.state.log?.length || 0 }}</b
+          >冒险记录</span
+        >
       </div>
-      <ul v-if="showLog" class="log">
-        <li v-for="(l, i) in log" :key="i">
-          <span class="l-stamp">第{{ l.day }}天·{{ l.period }}</span>
-          <span class="l-type" :class="typeClass(l.type)">{{ l.type }}</span>
-          <span class="l-text">{{ l.text }}</span>
-        </li>
-        <li v-if="!log.length" class="empty-hint">日志是空的。</li>
-      </ul>
+    </div>
+    <div class="events-layout">
+      <section class="card event-history">
+        <div class="event-section-head">
+          <h3 class="section-label">冒险时间线</h3>
+          <button class="text-button" @click="showLog = !showLog">
+            {{ showLog ? "收起日志" : "展开日志" }}
+          </button>
+        </div>
+        <ol v-if="showLog" class="timeline">
+          <li v-for="(entry, index) in log" :key="index">
+            <span class="timeline-icon"
+              ><Icon :name="logIcon(entry.type)" :size="14"
+            /></span>
+            <div class="timeline-content">
+              <div>
+                <span class="timeline-type">{{ entry.type || "记录" }}</span
+                ><small>第 {{ entry.day }} 天 · {{ entry.period }}</small>
+              </div>
+              <p>{{ entry.text }}</p>
+            </div>
+          </li>
+          <li v-if="!log.length" class="empty-hint">还没有冒险记录。</li>
+        </ol>
+        <p v-if="showLog && game.state.log?.length > 40" class="hint">
+          当前展示最近 40 条记录。
+        </p>
+      </section>
+      <div class="events-side">
+        <section
+          v-for="event in pending"
+          :key="event.code || event.name"
+          class="card pending-card"
+        >
+          <span class="tag gold">等待处理</span>
+          <h3>{{ event.name || "待处理事件" }}</h3>
+          <span v-if="event.code" class="event-code"
+            >事件 {{ event.code }}</span
+          >
+          <p>下一回合会将这件事带入故事，留意它的发展。</p>
+        </section>
+        <section class="card">
+          <h3 class="section-label">已触发事件</h3>
+          <div class="fired-events">
+            <div
+              v-for="(event, index) in [...fired].reverse()"
+              :key="index"
+              class="fired-event"
+            >
+              <span class="event-code">{{ event.code || "—" }}</span
+              ><span
+                ><b>{{ event.name }}</b
+                ><small>第 {{ event.day }} 天</small></span
+              ><Icon name="check" :size="14" />
+            </div>
+            <div v-if="!fired.length" class="soft-empty">
+              尚未触发事件牌，继续探索会带来新的变化。
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+    <section class="card event-deck">
+      <div class="event-section-head">
+        <h3 class="section-label">
+          事件牌目录<span class="tag subtle">{{ deck.length }}</span>
+        </h3>
+        <button class="text-button" @click="showDeck = !showDeck">
+          {{ showDeck ? "收起目录" : "查看目录" }}
+        </button>
+      </div>
+      <template v-if="showDeck"
+        ><div class="deck-search">
+          <Icon name="search" :size="14" /><input
+            v-model="query"
+            aria-label="搜索事件牌"
+            placeholder="搜索编号或名称…"
+          />
+        </div>
+        <div class="deck-grid">
+          <article
+            v-for="event in filteredDeck"
+            :key="event.code + '-' + event.name"
+            class="deck-entry"
+            :class="{ used: firedCodes.has(String(event.code)) }"
+          >
+            <span class="event-code">{{ event.code }}</span
+            ><b>{{ event.name }}</b
+            ><span class="tag subtle">{{
+              firedCodes.has(String(event.code))
+                ? "已触发"
+                : event.special
+                  ? "特殊事件"
+                  : "尚未触发"
+            }}</span>
+          </article>
+          <p v-if="!filteredDeck.length" class="hint">没有匹配的事件牌。</p>
+        </div></template
+      >
     </section>
   </template>
 </template>
-
 <style scoped>
-.card { display: flex; flex-direction: column; gap: 9px; }
-.head-row { display: flex; align-items: center; gap: 8px; }
-
-.pending { padding: 10px; border-radius: 10px; border: 1px solid rgba(217, 139, 58, 0.35); background: rgba(217, 139, 58, 0.07); }
-.p-line { display: flex; align-items: baseline; gap: 9px; }
-.p-code { font-family: var(--serif); font-size: 17px; color: var(--ember); }
-.p-name { font-size: 13px; color: var(--text); }
-.hint { font-size: 10.5px; color: var(--text-faint); margin: 0; line-height: 1.7; }
-
-.ev-list, .deck, .log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.ev {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 7px;
-  background: #161c24;
-  border: 1px solid var(--line-soft);
+.event-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 15px;
+  margin-bottom: 22px;
 }
-.e-code { font-size: 11px; color: var(--ember); font-variant-numeric: tabular-nums; min-width: 30px; }
-.e-name { flex: 1; font-size: 12px; color: var(--text-dim); }
-.e-day { font-size: 10px; color: var(--text-faint); }
-
-.deck li { display: flex; align-items: baseline; gap: 8px; padding: 3px 6px; font-size: 11.5px; border-radius: 6px; }
-.deck li:nth-child(odd) { background: rgba(255, 255, 255, 0.015); }
-.deck li.used { opacity: 0.4; text-decoration: line-through; }
-.d-code { color: var(--text-faint); min-width: 30px; font-variant-numeric: tabular-nums; }
-.d-name { flex: 1; color: var(--text-dim); }
-.d-used { font-size: 9.5px; color: var(--text-faint); }
-.d-spec { font-size: 9.5px; color: var(--violet); }
-
-.log li { display: flex; gap: 7px; align-items: baseline; padding: 3px 0; border-bottom: 1px dashed var(--line-soft); font-size: 11px; }
-.l-stamp { color: var(--text-faint); flex-shrink: 0; font-size: 10px; }
-.l-type {
-  flex-shrink: 0;
-  font-size: 9.5px;
-  padding: 0 5px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
+.event-stats > div {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  background: var(--ink-820);
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  padding: 17px;
   color: var(--text-faint);
 }
-.l-type.ev { color: var(--ember); border-color: rgba(217, 139, 58, 0.4); }
-.l-type.mv { color: var(--azure); border-color: rgba(95, 149, 216, 0.4); }
-.l-type.ac { color: var(--brass); border-color: var(--brass-dim); }
-.l-type.nr { color: var(--text-dim); }
-.l-text { flex: 1; color: var(--text-dim); line-height: 1.7; }
+.event-stats span {
+  font-size: 11px;
+}
+.event-stats b {
+  display: block;
+  font-size: 26px;
+  color: var(--text);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.events-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.event-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.event-section-head .section-label {
+  flex: 1;
+  margin: 0;
+}
+.event-section-head .text-button {
+  white-space: nowrap;
+}
+.timeline {
+  list-style: none;
+  margin: 24px 0 0;
+  padding: 0;
+}
+.timeline li {
+  display: flex;
+  gap: 15px;
+  position: relative;
+  padding-bottom: 23px;
+}
+.timeline li::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: 28px;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+.timeline li:last-child::before {
+  display: none;
+}
+.timeline-icon {
+  flex-shrink: 0;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: var(--ink-740);
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--brass);
+}
+.timeline-content {
+  flex: 1;
+  min-width: 0;
+}
+.timeline-content > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 3px 0 8px;
+}
+.timeline-type {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.timeline-content small {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.timeline-content p {
+  font-size: 12px;
+  line-height: 1.95;
+  color: var(--text-dim);
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.events-side {
+  display: grid;
+  gap: 16px;
+}
+.pending-card {
+  border-color: #bd98524d;
+  background: var(--brass-wash);
+}
+.pending-card h3 {
+  font-size: 15px;
+  margin: 13px 0 7px;
+}
+.pending-card p {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.8;
+  margin-bottom: 0;
+}
+.event-code {
+  font-size: 10px;
+  color: var(--brass);
+}
+.fired-event {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.fired-event:last-child {
+  border-bottom: 0;
+}
+.fired-event > span:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+.fired-event b {
+  font-size: 12px;
+  font-weight: 500;
+  display: block;
+}
+.fired-event small {
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.fired-event > svg {
+  color: var(--moss);
+}
+.soft-empty {
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.85;
+}
+.event-deck {
+  margin-top: 20px;
+}
+.deck-search {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  color: var(--text-faint);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 11px;
+  margin: 20px 0 15px;
+  max-width: 320px;
+}
+.deck-search input {
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  width: 100%;
+  min-width: 0;
+  font-size: 12px;
+}
+.deck-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.deck-entry {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+.deck-entry b {
+  font-size: 12px;
+  line-height: 1.75;
+  font-weight: 500;
+}
+.deck-entry.used {
+  background: #80b39406;
+  border-color: #80b39435;
+}
+@media (max-width: 1000px) {
+  .events-layout {
+    grid-template-columns: 1.4fr 1fr;
+  }
+  .deck-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 650px) {
+  .events-layout {
+    grid-template-columns: 1fr;
+  }
+  .event-stats {
+    gap: 8px;
+  }
+  .event-stats > div {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 13px;
+    gap: 7px;
+  }
+  .event-stats b {
+    font-size: 22px;
+  }
+  .deck-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

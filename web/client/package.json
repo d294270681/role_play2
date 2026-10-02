@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "RPG 文字冒险前端：Vue 3 + Naive UI 暗色跑团界面（剧情流 / 判定卡 / 插图 / 七面板）",
+  "description": "RPG 文字冒险工作台：Vue 3 + Naive UI，可视化角色、地图、物品、进度、关系、线索与战斗准备",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

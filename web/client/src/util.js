@@ -22,7 +22,13 @@ export const SKILL_ATTR = {
 };
 export const SKILLS = Object.keys(SKILL_ATTR);
 
-export const DIFFICULTY_NAMES = { 7: "简单", 9: "普通", 11: "困难", 13: "极难", 15: "传奇" };
+export const DIFFICULTY_NAMES = {
+  7: "简单",
+  9: "普通",
+  11: "困难",
+  13: "极难",
+  15: "传奇",
+};
 
 /** 判定档位（core/rules.md §2.3）：索引 0–4 对应大失败…大成功。 */
 export const TIER_META = [
@@ -34,7 +40,8 @@ export const TIER_META = [
 ];
 
 export function tierMeta(tier, tierIndex) {
-  if (Number.isInteger(tierIndex) && TIER_META[tierIndex]) return TIER_META[tierIndex];
+  if (Number.isInteger(tierIndex) && TIER_META[tierIndex])
+    return TIER_META[tierIndex];
   const i = TIER_META.findIndex((t) => t.key === String(tier ?? ""));
   return TIER_META[i >= 0 ? i : 2];
 }
@@ -67,7 +74,11 @@ export function effectiveDanger(loc, night) {
   let d = Number(loc.danger);
   if (!Number.isFinite(d)) d = 0;
   if (night) {
-    if (loc.night_danger !== null && loc.night_danger !== undefined && loc.night_danger !== "") {
+    if (
+      loc.night_danger !== null &&
+      loc.night_danger !== undefined &&
+      loc.night_danger !== ""
+    ) {
       d = Number(loc.night_danger) || 0;
     } else if (d > 0) d += 1;
   }
@@ -86,13 +97,20 @@ export function gaugeKind(name) {
   if (name === "生命") return "is-life";
   if (name === "精力") return "is-energy";
   if (name === "压力") return "is-stress";
+  if (name === "决心") return "is-resolve";
   return "";
 }
 
 export function currentPeriod(state) {
   if (!state) return "";
-  const periods = Array.isArray(state.periods) && state.periods.length ? state.periods : ["晨", "午", "暮", "夜"];
-  const i = Math.max(0, Math.min(periods.length - 1, Number(state.period_index) || 0));
+  const periods =
+    Array.isArray(state.periods) && state.periods.length
+      ? state.periods
+      : ["晨", "午", "暮", "夜"];
+  const i = Math.max(
+    0,
+    Math.min(periods.length - 1, Number(state.period_index) || 0),
+  );
   return periods[i];
 }
 

@@ -1,161 +1,480 @@
 <script setup>
 import { computed, ref } from "vue";
-
-import { applyEdit, game } from "../../store.js";
+import Icon from "../Icon.vue";
+import GaugeMeter from "../GaugeMeter.vue";
+import { applyEdit, game, stageAction } from "../../store.js";
+import { clamp, relationLabel } from "../../ui.js";
 import { signed } from "../../util.js";
-
-const relations = computed(() => game.state?.relations || []);
-const party = computed(() => Object.entries(game.state?.party || {}));
-
-const newNpc = ref("");
-const showAdd = ref(false);
-
+const relations = computed(() => game.state?.relations || []),
+  party = computed(() => Object.entries(game.state?.party || {}));
+const query = ref(""),
+  showAdd = ref(false),
+  newNpc = ref(""),
+  editing = ref(false);
+const noteDrafts = ref(new Map());
+const people = computed(() => {
+  const names = new Set([
+    ...game.characters
+      .filter((card) => card.name !== game.state?.character?.name)
+      .map((card) => card.name),
+    ...relations.value.map((relation) => relation.npc),
+  ]);
+  return [...names]
+    .map((name) => ({
+      name,
+      card: game.characters.find((card) => card.name === name),
+      relation: relations.value.find((relation) => relation.npc === name),
+    }))
+    .filter((person) =>
+      (person.name + " " + (person.card?.concept || "")).includes(
+        query.value.trim(),
+      ),
+    );
+});
 async function add() {
-  const npc = newNpc.value.trim();
-  if (!npc) return;
-  const ok = await applyEdit({ op: "set_relation", npc, value: 0 });
-  if (ok) {
+  if (!newNpc.value.trim()) return;
+  if (
+    await applyEdit({ op: "set_relation", npc: newNpc.value.trim(), value: 0 })
+  ) {
     newNpc.value = "";
     showAdd.value = false;
   }
 }
-
-const setValue = (npc, value) => applyEdit({ op: "set_relation", npc, value: Number(value) || 0 });
-const setNote = (npc, note) => applyEdit({ op: "set_relation", npc, note: String(note ?? "") });
-
-/** 关系档位：−5 敌对 … 0 陌生 … +5 亲密。 */
-function relationWord(v) {
-  const n = Number(v) || 0;
-  if (n <= -4) return "死敌";
-  if (n === -3) return "仇怨";
-  if (n === -2) return "厌恶";
-  if (n === -1) return "冷淡";
-  if (n === 0) return "陌生";
-  if (n === 1) return "点头";
-  if (n === 2) return "熟人";
-  if (n === 3) return "交情";
-  if (n === 4) return "信任";
-  return "生死之交";
-}
-
-function barColor(v) {
-  const n = Math.max(-5, Math.min(5, Number(v) || 0));
-  if (n > 0) return `color-mix(in srgb, var(--moss) ${35 + n * 13}%, #2c3441)`;
-  if (n < 0) return `color-mix(in srgb, var(--blood) ${35 + -n * 13}%, #2c3441)`;
-  return "#2c3441";
+const setValue = (npc, value) =>
+  applyEdit({ op: "set_relation", npc, value: Number(value) || 0 });
+async function setNote(person) {
+  const value = noteDrafts.value.get(person.name);
+  if (value === undefined || value === (person.relation?.note || "")) return;
+  if (await applyEdit({ op: "set_relation", npc: person.name, note: value })) {
+    if (noteDrafts.value.get(person.name) === value)
+      noteDrafts.value.delete(person.name);
+  }
 }
 </script>
-
 <template>
-  <div v-if="!game.loaded" class="empty-hint">还没有载入存档。</div>
-
+  <div v-if="!game.loaded" class="empty-hint">
+    旅途中认识的人物、关系和同行者会显示在这里。
+  </div>
   <template v-else>
-    <section class="card">
-      <div class="head-row">
-        <h4 class="section-label" style="margin: 0; flex: 1">关系（{{ relations.length }}）</h4>
-        <n-button size="tiny" type="primary" ghost @click="showAdd = !showAdd">
-          {{ showAdd ? "取消" : "＋ 新增" }}
-        </n-button>
+    <div class="panel-toolbar">
+      <div class="search-field">
+        <Icon name="search" :size="15" /><input
+          v-model="query"
+          aria-label="搜索人物"
+          placeholder="搜索人物或身份…"
+        />
       </div>
-
-      <div v-if="showAdd" class="add-box">
-        <n-input v-model:value="newNpc" size="small" placeholder="NPC 名" @keyup.enter="add" />
-        <n-button size="small" type="primary" block :disabled="!newNpc.trim()" @click="add">建立关系（初始 0）</n-button>
+      <div class="toolbar-buttons">
+        <button
+          class="secondary-button"
+          :aria-pressed="editing"
+          @click="editing = !editing"
+        >
+          {{ editing ? "完成管理" : "管理关系" }}</button
+        ><button
+          class="primary-button"
+          :disabled="game.busy"
+          @click="showAdd = true"
+        >
+          <Icon name="plus" :size="15" />建立关系
+        </button>
       </div>
-
-      <ul class="rel-list">
-        <li v-for="r in relations" :key="r.npc" class="rel">
-          <div class="rel-head">
-            <span class="r-npc">{{ r.npc }}</span>
-            <span class="r-val" :style="{ color: barColor(r.value) }">{{ signed(r.value) }}</span>
-            <span class="r-word">{{ relationWord(r.value) }}</span>
+    </div>
+    <div class="people-grid">
+      <article
+        v-for="person in people"
+        :key="person.name"
+        class="card person-card"
+      >
+        <div class="person-heading">
+          <span class="person-avatar">{{ person.name.slice(0, 1) }}</span>
+          <div>
+            <h3>{{ person.name }}</h3>
+            <p>{{ person.card?.concept || "人物记录" }}</p>
           </div>
-          <div class="rel-bar">
-            <div class="rel-track">
-              <div class="rel-center" />
-              <div
-                class="rel-fill"
-                :style="{
-                  background: barColor(r.value),
-                  left: r.value >= 0 ? '50%' : `${50 + (Number(r.value) / 5) * 50}%`,
-                  width: `${Math.abs(Number(r.value) || 0) * 10}%`,
-                }"
-              />
+          <span
+            v-if="person.relation"
+            class="relation-value"
+            :class="{
+              friendly: person.relation.value > 0,
+              hostile: person.relation.value < 0,
+            }"
+            >{{ signed(person.relation.value) }}</span
+          >
+        </div>
+        <p v-if="person.card?.meta?.外貌" class="appearance">
+          {{ person.card.meta.外貌 }}
+        </p>
+        <template v-if="person.relation"
+          ><div class="relation-caption">
+            <span>当前关系</span
+            ><b>{{ relationLabel(person.relation.value) }}</b>
+          </div>
+          <div
+            class="relation-track"
+            :aria-label="'关系值' + person.relation.value"
+          >
+            <i class="relation-center"></i
+            ><span
+              :style="{
+                left:
+                  person.relation.value >= 0
+                    ? '50%'
+                    : 50 + clamp(person.relation.value, -5, 5) * 10 + '%',
+                width: Math.abs(clamp(person.relation.value, -5, 5)) * 10 + '%',
+              }"
+              :class="{ hostile: person.relation.value < 0 }"
+            ></span>
+          </div>
+          <div class="relation-labels">
+            <span>死敌</span><span>中立</span><span>生死之交</span>
+          </div>
+          <p v-if="!editing && person.relation.note" class="person-note">
+            {{ person.relation.note }}
+          </p>
+          <div v-if="editing" class="relation-controls">
+            <button
+              class="secondary-button"
+              :disabled="game.busy || person.relation.value <= -5"
+              :aria-label="person.name + '关系减1'"
+              @click="setValue(person.name, person.relation.value - 1)"
+            >
+              −</button
+            ><n-input
+              :value="noteDrafts.get(person.name) ?? person.relation.note ?? ''"
+              size="small"
+              :disabled="game.busy"
+              placeholder="关系备注"
+              @update:value="(value) => noteDrafts.set(person.name, value)"
+              @blur="setNote(person)"
+            /><button
+              class="secondary-button"
+              :disabled="game.busy || person.relation.value >= 5"
+              :aria-label="person.name + '关系加1'"
+              @click="setValue(person.name, person.relation.value + 1)"
+            >
+              ＋
+            </button>
+          </div></template
+        >
+        <div v-else class="unknown-relation">
+          <span>尚未建立关系记录</span
+          ><button
+            class="text-button"
+            :disabled="game.busy"
+            @click="setValue(person.name, 0)"
+          >
+            建立记录
+          </button>
+        </div>
+        <button
+          class="text-button conversation"
+          :disabled="game.busy"
+          @click="stageAction('向' + person.name + '询问近况')"
+        >
+          写下与{{ person.name }}的行动<Icon name="arrow" :size="14" />
+        </button>
+      </article>
+      <div v-if="!people.length" class="empty-hint">
+        {{
+          query
+            ? "没有找到匹配的人物。"
+            : "还没有人物资料，可以建立一条关系记录。"
+        }}
+      </div>
+    </div>
+    <section v-if="party.length" class="card party-section">
+      <h3 class="section-label">同行者状态</h3>
+      <div class="party-grid">
+        <article v-for="[name, member] in party" :key="name" class="party-card">
+          <div class="party-title">
+            <span class="person-avatar small">{{ name.slice(0, 1) }}</span>
+            <div>
+              <b>{{ name }}</b
+              ><small
+                >同行关系：{{ relationLabel(member.relation) }} ·
+                {{ signed(member.relation) }}</small
+              >
             </div>
-            <div class="rel-step">
-              <button class="mini" @click="setValue(r.npc, (Number(r.value) || 0) - 1)">−</button>
-              <button class="mini" @click="setValue(r.npc, (Number(r.value) || 0) + 1)">＋</button>
-            </div>
           </div>
-          <n-input
-            :value="r.note"
-            size="tiny"
-            placeholder="备注"
-            @blur="(e) => { const v = e?.target?.value ?? ''; if (v !== (r.note || '')) setNote(r.npc, v); }"
-          />
-        </li>
-        <li v-if="!relations.length" class="empty-hint">还没有记录任何关系。</li>
-      </ul>
+          <div class="party-gauges">
+            <GaugeMeter
+              v-for="[gaugeName, gauge] in Object.entries(member.gauges || {})"
+              :key="gaugeName"
+              :name="gaugeName"
+              :gauge="gauge"
+              compact
+            />
+          </div>
+          <p v-if="member.notes">{{ member.notes }}</p>
+          <div v-if="member.statuses?.length" class="party-statuses">
+            <span v-for="status in member.statuses" :key="status" class="tag">{{
+              status
+            }}</span>
+          </div>
+        </article>
+      </div>
+      <p class="hint">同行者的状态与关系随冒险更新。这里展示你已知的资料。</p>
     </section>
-
-    <section v-if="party.length" class="card">
-      <h4 class="section-label">同行者</h4>
-      <ul class="party-list">
-        <li v-for="[name, p] in party" :key="name" class="party">
-          <div class="p-head">
-            <span class="p-name">{{ name }}</span>
-            <span class="p-rel">{{ relationWord(p.relation) }}（{{ signed(p.relation) }}）</span>
-          </div>
-          <div v-if="p.gauges && Object.keys(p.gauges).length" class="p-gauges">
-            <span v-for="[gn, g] in Object.entries(p.gauges)" :key="gn" class="p-gauge">
-              {{ gn }} {{ g.value }}/{{ g.max }}
-            </span>
-          </div>
-          <div v-if="p.notes" class="p-notes">{{ p.notes }}</div>
-        </li>
-      </ul>
-      <p class="hint">同行者关系由 GM 的 state_patch 结算，这里是只读视图；「关系」里可手动覆盖。</p>
-    </section>
+    <n-modal
+      v-model:show="showAdd"
+      preset="card"
+      title="建立人物关系"
+      style="max-width: 420px"
+      :bordered="false"
+      ><n-input
+        v-model:value="newNpc"
+        placeholder="人物名称"
+        @keyup.enter="add"
+      />
+      <p class="hint">初始关系为 0。可以随后调整数值与备注。</p>
+      <template #footer
+        ><div class="modal-actions">
+          <n-button @click="showAdd = false">取消</n-button
+          ><n-button
+            type="primary"
+            :disabled="game.busy || !newNpc.trim()"
+            @click="add"
+            >建立关系</n-button
+          >
+        </div></template
+      ></n-modal
+    >
   </template>
 </template>
-
 <style scoped>
-.card { display: flex; flex-direction: column; gap: 9px; }
-.head-row { display: flex; align-items: center; gap: 8px; }
-.add-box { display: flex; flex-direction: column; gap: 6px; padding: 9px; border: 1px dashed var(--line); border-radius: 9px; }
-
-.rel-list, .party-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.rel { padding: 8px; border-radius: 9px; background: #161c24; border: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: 6px; }
-.rel-head { display: flex; align-items: baseline; gap: 7px; }
-.r-npc { font-size: 12.5px; color: var(--text); flex: 1; }
-.r-val { font-size: 15px; font-family: var(--serif); font-variant-numeric: tabular-nums; }
-.r-word { font-size: 10.5px; color: var(--text-faint); }
-
-.rel-bar { display: flex; align-items: center; gap: 8px; }
-.rel-track { position: relative; flex: 1; height: 7px; border-radius: 4px; background: #10141a; border: 1px solid var(--line-soft); overflow: hidden; }
-.rel-center { position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--line); }
-.rel-fill { position: absolute; top: 0; bottom: 0; transition: all 0.3s cubic-bezier(0.22, 0.61, 0.36, 1); }
-.rel-step { display: flex; gap: 3px; }
-
-.party { padding: 7px 8px; border-radius: 9px; background: #161c24; border: 1px solid var(--line-soft); }
-.p-head { display: flex; align-items: baseline; gap: 8px; }
-.p-name { font-size: 12.5px; color: var(--text); }
-.p-rel { font-size: 10.5px; color: var(--text-faint); }
-.p-gauges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-.p-gauge { font-size: 10.5px; color: var(--azure); border: 1px solid rgba(95, 149, 216, 0.3); border-radius: 9px; padding: 0 6px; }
-.p-notes { font-size: 10.5px; color: var(--text-faint); line-height: 1.65; margin-top: 5px; }
-
-.mini {
-  width: 22px;
-  height: 20px;
-  border-radius: 5px;
+.search-field {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  width: 280px;
   border: 1px solid var(--line);
-  background: #171c24;
+  border-radius: 8px;
+  background: var(--ink-860);
+  padding: 9px 12px;
   color: var(--text-faint);
-  font-size: 11px;
-  cursor: pointer;
-  line-height: 1;
 }
-.mini:hover { color: var(--brass); border-color: var(--brass-dim); }
-.hint { font-size: 10.5px; color: var(--text-faint); margin: 0; line-height: 1.7; }
+.search-field input {
+  width: 100%;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text);
+  font-size: 12px;
+}
+.search-field input::placeholder {
+  color: var(--text-faint);
+}
+.search-field:focus-within {
+  border-color: var(--brass-dim);
+}
+.toolbar-buttons {
+  display: flex;
+  gap: 8px;
+}
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.person-heading {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.person-avatar {
+  width: 45px;
+  height: 45px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #3a4136, #232b27);
+  border: 1px solid #72816a38;
+  color: #c5c8a9;
+  font-family: var(--serif);
+  font-size: 22px;
+  border-radius: 11px;
+}
+.person-heading > div {
+  flex: 1;
+  min-width: 0;
+}
+.person-heading h3 {
+  font-size: 15px;
+  margin: 0;
+  font-weight: 600;
+}
+.person-heading p {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 4px 0 0;
+  line-height: 1.7;
+}
+.relation-value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.friendly {
+  color: var(--moss);
+}
+.hostile {
+  color: var(--blood);
+}
+.appearance,
+.person-note {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--text-dim);
+}
+.relation-caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-faint);
+  margin-top: 23px;
+  margin-bottom: 8px;
+}
+.relation-caption b {
+  font-weight: 500;
+  color: var(--text-dim);
+}
+.relation-track {
+  height: 6px;
+  border-radius: 4px;
+  background: var(--ink-950);
+  position: relative;
+  overflow: hidden;
+}
+.relation-center {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line-bright);
+  z-index: 1;
+}
+.relation-track > span {
+  height: 100%;
+  position: absolute;
+  top: 0;
+  background: var(--moss);
+}
+.relation-track > span.hostile {
+  background: var(--blood);
+}
+.relation-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text-faint);
+  margin-top: 6px;
+}
+.relation-controls {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+}
+.relation-controls > .n-input {
+  flex: 1;
+  min-width: 0;
+}
+.relation-controls button {
+  padding: 4px 8px;
+}
+.unknown-relation {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 20px;
+}
+.conversation {
+  margin-top: 15px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  width: 100%;
+  justify-content: space-between;
+  font-size: 10px;
+}
+.people-grid > .empty-hint {
+  grid-column: 1/-1;
+}
+.party-section {
+  margin-top: 22px;
+}
+.party-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.party-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+}
+.party-title {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.person-avatar.small {
+  width: 35px;
+  height: 35px;
+  font-size: 17px;
+}
+.party-title b {
+  font-size: 12px;
+  font-weight: 500;
+}
+.party-title small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.party-gauges {
+  display: grid;
+  gap: 12px;
+  margin-top: 15px;
+}
+.party-card p {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--text-dim);
+  margin-bottom: 0;
+}
+.party-statuses {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+@media (max-width: 1400px) {
+  .people-grid,
+  .party-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 650px) {
+  .people-grid,
+  .party-grid {
+    grid-template-columns: 1fr;
+  }
+  .search-field {
+    width: 100%;
+  }
+  .toolbar-buttons {
+    margin-left: auto;
+  }
+}
 </style>

@@ -1,241 +1,340 @@
 <script setup>
-import { computed, ref } from "vue";
-
-import { game, newGame, notify, openSlot, refreshSlots, selectModule } from "../store.js";
-
-const creating = ref(false);
-const newSlot = ref(1);
-const characterName = ref("");
-
-/** 当前本里第一个空槽 / 当前槽。 */
-const freeSlot = computed(() => game.slots.find((s) => !s.exists)?.slot || 1);
-
-async function pickModule(dir) {
-  if (dir === game.module) return;
-  if (game.busy) {
-    // 回合还在流式接收：此时切本会先 clearStream()，随后旧本的 state 事件
-    // 又会把旧存档盖到新本面板上。等回合完成并同步存档后再切。
-    notify("回合进行中，等这一回合结束再切本", "warn");
-    return;
-  }
-  selectModule(dir).catch((e) => notify(e?.message ?? String(e), "error"));
-}
-
-function pickSlot(slot) {
-  if (slot === game.slot && game.loaded) return;
-  if (game.busy) {
-    notify("回合进行中，稍后再切换存档", "warn");
-    return;
-  }
-  const info = game.slots.find((s) => s.slot === slot);
-  if (info && !info.exists) {
-    // 空槽直接开新档，省得先点一次「＋」
-    startCreate(slot);
-    return;
-  }
-  openSlot(slot).catch((e) => notify(e?.message ?? String(e), "error"));
-}
-
-function startCreate(slot) {
-  if (game.busy || game.loading) {
-    notify("正在处理当前存档，请等待完成后再新建", "warn");
-    return;
-  }
-  newSlot.value = slot || freeSlot.value;
-  characterName.value = "";
-  creating.value = true;
-}
-
-async function confirmCreate() {
-  const slot = Number(newSlot.value) || 1;
-  const occupied = game.slots.find((s) => s.slot === slot && s.exists);
-  if (occupied && !window.confirm(`槽位 ${slot} 已有存档（${occupied.updated || ""}），开新档会覆盖它。继续？`)) {
-    return;
-  }
-  creating.value = false;
-  await newGame({ character: characterName.value, slot });
-}
-
-function slotSummary(s) {
-  if (!s.exists) return "空档位";
-  return [s.day ? `第 ${s.day} 天` : null, s.period, s.location].filter(Boolean).join(" · ");
-}
+import { computed } from "vue";
+import Icon from "./Icon.vue";
+import { game, navigate } from "../store.js";
+import { VIEWS } from "../ui.js";
+const counts = computed(() => ({
+  items: game.state?.inventory?.length,
+  clocks: game.state?.clocks?.length,
+  relations: game.state?.relations?.length,
+  clues: game.state?.clues?.filter((clue) => !clue.done).length,
+  events:
+    (game.state?.events_fired?.length || 0) +
+    (game.state?.pending_event ? 1 : 0),
+}));
 </script>
-
 <template>
-  <aside class="sidebar" :class="{ collapsed: game.leftCollapsed }">
-    <template v-if="game.leftCollapsed">
-      <button class="rail-btn" title="展开左栏" @click="game.leftCollapsed = false">›</button>
-    </template>
-
-    <template v-else>
-      <section class="block">
-        <h3 class="section-label">RPG 本</h3>
-        <ul class="module-list">
-          <li v-for="m in game.modules" :key="m.dir">
-            <button
-              class="module-item"
-              :class="{ active: m.dir === game.module }"
-              :title="m.tone || m.dir"
-              @click="pickModule(m.dir)"
-            >
-              <span class="m-title">{{ m.title }}</span>
-              <span class="m-meta">{{ m.rating || m.engine }}</span>
-            </button>
-          </li>
-          <li v-if="!game.modules.length" class="empty-hint">后端未返回任何本。</li>
-        </ul>
-      </section>
-
-      <section class="block">
-        <h3 class="section-label">存档槽</h3>
-        <ul class="slot-list">
-          <li
-            v-for="s in game.slots"
-            :key="s.slot"
-            class="slot-item"
-            :class="{ active: s.slot === game.slot, empty: !s.exists }"
-            @click="pickSlot(s.slot)"
-          >
-            <div class="slot-head">
-              <span class="slot-no">{{ s.slot }}</span>
-              <span class="slot-title">{{ s.exists ? s.character || s.title : "空档位" }}</span>
-              <button class="slot-del" title="在此槽开新档" @click.stop="startCreate(s.slot)">＋</button>
-            </div>
-            <div class="slot-meta">{{ slotSummary(s) }}</div>
-            <div v-if="s.exists" class="slot-updated">{{ s.updated }}</div>
-          </li>
-          <li v-if="!game.slots.length" class="empty-hint">请先选择一本。</li>
-        </ul>
-      </section>
-
-      <section class="block foot">
-        <button class="primary-btn" :disabled="!game.module || game.busy || game.loading" @click="startCreate(freeSlot)">＋ 新建存档</button>
-        <button
-          class="ghost-btn"
-          :disabled="!game.module"
-          @click="refreshSlots().catch((e) => notify(e?.message ?? String(e), 'error'))"
+  <aside class="sidebar">
+    <div class="nav-caption">
+      <span>探索与记录</span
+      ><button
+        class="icon-button collapse-nav"
+        :title="game.leftCollapsed ? '展开导航' : '收起导航'"
+        @click="game.leftCollapsed = !game.leftCollapsed"
+      >
+        <Icon name="menu" :size="15" /></button
+      ><button
+        class="icon-button close-nav"
+        aria-label="关闭功能导航"
+        @click="game.mobileNav = false"
+      >
+        <Icon name="close" :size="18" />
+      </button>
+    </div>
+    <nav aria-label="游戏功能">
+      <button
+        v-for="(view, index) in VIEWS"
+        :key="view.key"
+        class="nav-item"
+        :class="{ active: game.view === view.key, upcoming: view.upcoming }"
+        :title="view.label + ' · Alt+' + (index + 1)"
+        :aria-label="view.label"
+        :aria-current="game.view === view.key ? 'page' : undefined"
+        @click="navigate(view.key)"
+      >
+        <Icon :name="view.icon" :size="19" /><span class="nav-label">{{
+          view.label
+        }}</span
+        ><small v-if="view.upcoming" class="nav-badge">预备</small
+        ><span
+          v-else-if="counts[view.key] !== undefined && game.loaded"
+          class="nav-count"
+          >{{ counts[view.key] }}</span
+        ><span v-if="game.view === view.key" class="nav-active-dot"></span>
+      </button>
+    </nav>
+    <div class="sidebar-bottom">
+      <div
+        class="session-summary"
+        :title="game.loaded ? '当前存档 ' + game.slot : '管理冒险本与存档'"
+      >
+        <div class="session-icon"><Icon name="save" :size="18" /></div>
+        <span
+          ><b>{{
+            game.loaded
+              ? "存档 " + String(game.slot).padStart(2, "0")
+              : "还未开启冒险"
+          }}</b
+          ><small>{{
+            game.busy
+              ? "正在同步…"
+              : game.loaded
+                ? "行动完成后自动保存"
+                : "选择冒险本与角色"
+          }}</small></span
         >
-          刷新槽位
-        </button>
-      </section>
-    </template>
-
-    <n-modal v-model:show="creating" preset="card" title="开新档" style="max-width: 420px">
-      <div class="form">
-        <label class="lbl">槽位</label>
-        <n-select v-model:value="newSlot" :options="[1, 2, 3].map((n) => ({ label: `槽位 ${n}`, value: n }))" />
-        <label class="lbl">角色名（留空用本册默认）</label>
-        <n-input v-model:value="characterName" placeholder="例如：阿澄" clearable />
-        <div class="form-hint">开新档会按本册 module.md 的开局设定重置该槽位。</div>
       </div>
-      <template #footer>
-        <n-space justify="end">
-          <n-button @click="creating = false">取消</n-button>
-          <n-button type="primary" @click="confirmCreate">开档</n-button>
-        </n-space>
-      </template>
-    </n-modal>
+      <button
+        class="session-button"
+        title="冒险与存档"
+        @click="game.sessionsOpen = true"
+      >
+        <Icon name="book" :size="17" /><span>冒险与存档</span
+        ><Icon name="chevron" :size="14" />
+      </button>
+      <button
+        class="settings-link"
+        title="模型与界面设置"
+        @click="game.settingsOpen = true"
+      >
+        <Icon name="settings" :size="16" /><span>模型与界面设置</span>
+      </button>
+      <div class="sidebar-note">
+        <span class="status-dot ready"></span>文字冒险 · 自由探索
+      </div>
+    </div>
   </aside>
 </template>
-
 <style scoped>
 .sidebar {
-  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 16px;
-  padding: 14px 12px;
+  padding: 25px 14px 18px;
+  background: var(--ink-860);
+  border-right: 1px solid var(--line-soft);
+  min-height: 0;
   overflow-y: auto;
 }
-.sidebar.collapsed { padding: 10px 6px; align-items: center; }
-
-.rail-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: #171c24;
-  color: var(--text-dim);
-  cursor: pointer;
+.nav-caption {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--text-faint);
+  font-size: 10px;
+  letter-spacing: 0.1em;
 }
-
-.block { flex-shrink: 0; }
-.block.foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
-
-.module-list, .slot-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-
-.module-item {
-  width: 100%;
-  text-align: left;
-  padding: 8px 10px;
-  border-radius: 9px;
-  border: 1px solid var(--line-soft);
-  background: var(--ink-820);
-  color: var(--text-dim);
-  cursor: pointer;
+.close-nav {
+  display: none;
+}
+nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  transition: all 0.15s;
+  gap: 5px;
 }
-.module-item:hover { border-color: var(--brass-dim); color: var(--text); }
-.module-item.active {
-  border-color: var(--brass);
-  background: linear-gradient(90deg, rgba(212, 169, 74, 0.14), rgba(212, 169, 74, 0.03));
-  color: var(--text);
-}
-.m-title { font-size: 13px; font-weight: 600; }
-.m-meta { font-size: 11px; color: var(--text-faint); }
-
-.slot-item {
-  padding: 8px 10px;
+.nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid transparent;
+  background: none;
   border-radius: 9px;
-  border: 1px solid var(--line-soft);
-  background: var(--ink-820);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.slot-item:hover { border-color: var(--brass-dim); }
-.slot-item.active { border-color: var(--brass); background: rgba(212, 169, 74, 0.08); }
-.slot-item.empty { opacity: 0.72; border-style: dashed; }
-.slot-head { display: flex; align-items: center; gap: 7px; }
-.slot-no {
-  width: 17px; height: 17px; line-height: 17px; text-align: center;
-  border-radius: 5px; background: #232b36; color: var(--text-dim);
-  font-size: 11px; font-weight: 700;
-}
-.slot-title { font-size: 12.5px; font-weight: 600; color: var(--text); flex: 1; }
-.slot-del {
-  border: none; background: transparent; color: var(--text-faint);
-  cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px;
-}
-.slot-del:hover { color: var(--brass); }
-.slot-meta { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
-.slot-updated { font-size: 10.5px; color: var(--text-faint); margin-top: 1px; }
-
-.primary-btn {
-  padding: 9px;
-  border-radius: 9px;
-  border: 1px solid var(--brass-dim);
-  background: linear-gradient(180deg, #d4a94a, #b8913a);
-  color: #1a1408;
-  font-weight: 700;
-  cursor: pointer;
-}
-.primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.ghost-btn {
-  padding: 7px;
-  border-radius: 9px;
-  border: 1px solid var(--line);
-  background: transparent;
+  padding: 12px;
   color: var(--text-dim);
-  cursor: pointer;
+  font-size: 12px;
+  position: relative;
+  text-align: left;
+  min-height: 45px;
 }
-.ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.ghost-btn:hover:not(:disabled) { color: var(--text); border-color: var(--brass-dim); }
-
-.form { display: flex; flex-direction: column; gap: 6px; }
-.lbl { font-size: 12px; color: var(--text-dim); margin-top: 6px; }
-.form-hint { font-size: 11.5px; color: var(--text-faint); margin-top: 8px; }
+.nav-item:hover {
+  color: var(--text);
+  background: var(--ink-820);
+}
+.nav-item.active {
+  background: var(--brass-wash);
+  color: var(--brass);
+  border-color: #c49c4a24;
+}
+.nav-label {
+  flex: 1;
+  white-space: nowrap;
+}
+.nav-count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  min-width: 18px;
+  text-align: center;
+  background: var(--ink-740);
+  border-radius: 5px;
+  padding: 1px 3px;
+}
+.nav-item.active .nav-count {
+  background: #bca56818;
+  color: var(--brass);
+}
+.nav-badge {
+  font-size: 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-faint);
+  padding: 0 4px;
+}
+.nav-item.upcoming {
+  margin-top: 12px;
+  border-top: 1px solid var(--line-soft);
+  border-radius: 0 0 9px 9px;
+}
+.nav-active-dot {
+  position: absolute;
+  left: -14px;
+  top: 13px;
+  bottom: 13px;
+  width: 3px;
+  background: var(--brass);
+  border-radius: 0 3px 3px 0;
+}
+.sidebar-bottom {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 24px;
+}
+.session-summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 8px;
+}
+.session-icon {
+  width: 33px;
+  height: 33px;
+  display: grid;
+  place-items: center;
+  background: var(--ink-740);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--text-dim);
+}
+.session-summary b {
+  font-size: 11px;
+  font-weight: 500;
+}
+.session-summary small {
+  display: block;
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 3px;
+}
+.session-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--ink-820);
+  color: var(--text);
+  font-size: 11px;
+}
+.session-button > span {
+  flex: 1;
+  text-align: left;
+}
+.session-button > svg:last-child {
+  color: var(--text-faint);
+}
+.settings-link {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.sidebar-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+.nav-compact .sidebar {
+  padding: 24px 10px 18px;
+}
+.nav-compact .nav-caption {
+  padding: 0;
+  justify-content: center;
+}
+.nav-compact .nav-caption > span,
+.nav-compact .nav-label,
+.nav-compact .nav-count,
+.nav-compact .nav-badge,
+.nav-compact .sidebar-bottom span,
+.nav-compact .sidebar-bottom small,
+.nav-compact .sidebar-note,
+.nav-compact .session-summary {
+  display: none;
+}
+.nav-compact .nav-item {
+  justify-content: center;
+  padding: 13px 0;
+}
+.nav-compact .session-button,
+.nav-compact .settings-link {
+  justify-content: center;
+  padding: 12px 0;
+}
+.nav-compact .session-button > svg:last-child {
+  display: none;
+}
+@media (max-width: 1000px) {
+  .sidebar,
+  .nav-compact .sidebar {
+    position: fixed;
+    top: 64px;
+    bottom: 0;
+    left: 0;
+    width: 250px;
+    z-index: 100;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    padding: 22px 14px 18px;
+    box-shadow: var(--shadow-lift);
+  }
+  .nav-open .sidebar {
+    transform: translateX(0);
+  }
+  .collapse-nav {
+    display: none;
+  }
+  .close-nav {
+    display: flex;
+  }
+  .nav-compact .nav-caption {
+    justify-content: space-between;
+    padding: 0 12px;
+  }
+  .nav-compact .nav-caption > span,
+  .nav-compact .nav-label {
+    display: block;
+  }
+  .nav-compact .nav-item {
+    justify-content: flex-start;
+    padding: 12px;
+  }
+  .nav-compact .sidebar-bottom span,
+  .nav-compact .sidebar-bottom small {
+    display: block;
+  }
+  .nav-compact .session-summary,
+  .nav-compact .sidebar-note {
+    display: flex;
+  }
+  .nav-compact .session-button,
+  .nav-compact .settings-link {
+    justify-content: flex-start;
+    padding: 11px 12px;
+  }
+  .nav-compact .nav-count,
+  .nav-compact .nav-badge {
+    display: block;
+  }
+}
 </style>
