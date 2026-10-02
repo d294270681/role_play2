@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import api from "./api.js";
-import { applyEdit, canSend, clearStream, game, newGame, openSlot, reloadState, selectModule, sendAction, generateImage, abortTurn, loadImageStatus, controlImageRuntime, checkImageEnvironment, setupImage, loadImageSetup, disableImage } from "./store.js";
+import { applyEdit, canSend, clearStream, game, newGame, openSlot, reloadState, selectModule, sendAction, generateImage, abortTurn, loadImageStatus, controlImageRuntime, checkImageEnvironment, setupImage, loadImageSetup, disableImage, loadConfig, saveConfig, bootstrap } from "./store.js";
+import { modelForm, modelPatch } from "./modelConfig.js";
 
 function deferred() {
   let resolve;
@@ -25,7 +26,8 @@ test.beforeEach((t) => {
   game.imageEnvironment = null;
   Object.assign(game, { module: "alpha", slot: 1, loaded: false, loading: false, busy: false, turnStreaming: false,
     moduleInfo: null, state: null, map: { locations: [], routes: [] }, characters: [], events: [],
-    slots: [], suggestions: [], portraitUrl: "", locationImage: {}, lastError: "", toasts: [] });
+    slots: [], suggestions: [], portraitUrl: "", locationImage: {}, lastError: "", toasts: [], config: null,
+    hasKey: false, echo: true, settingsOpen: false });
   // 提示条和打字动画不需要在无界面的测试中等待。
   t.mock.method(globalThis, "setTimeout", () => 0);
   t.mock.method(globalThis, "setInterval", () => 0);
@@ -275,4 +277,60 @@ test("关闭图片生成后迟到的安装响应不能重新打开前端状态",
   assert.equal(game.comfy.enabled, false);
   assert.equal(game.comfy.available, false);
   assert.equal(game.imageSetup.status, "cancelled");
+});
+
+test("保存模型后迟到的旧配置读取不能覆盖模型、认证或演示标记", async (t) => {
+  const old = deferred();
+  t.mock.method(api, "getConfig", () => old.promise);
+  t.mock.method(api, "saveConfig", async () => ({ llm_mode: "api", model: "new-model", configured: true, has_key: true, echo: false }));
+  t.mock.method(api, "imageStatus", async () => ({ enabled: false, available: false, online: false, profiles: [] }));
+  const pending = loadConfig();
+  await saveConfig({ model: "new-model" });
+  old.resolve({ llm_mode: "demo", has_key: false, echo: true }); await pending;
+  assert.equal(game.config.model, "new-model"); assert.equal(game.hasKey, true); assert.equal(game.echo, false);
+});
+
+test("游戏快照中的旧认证标记不能覆盖已保存的模型配置", async (t) => {
+  game.config = { llm_mode: "api", model: "configured-model", has_key: true, echo: false };
+  const snapshot = payload();
+  snapshot.has_key = false; snapshot.echo = true;
+  t.mock.method(api, "getState", async () => snapshot);
+  await openSlot(1);
+  assert.equal(game.hasKey, true); assert.equal(game.echo, false);
+  assert.equal(game.stream.some((entry) => entry.text.includes("未配置文字模型")), false);
+});
+
+test("保存期间开始的配置读取也不能取消保存结果或覆盖新配置", async (t) => {
+  const writing = deferred(), reading = deferred();
+  t.mock.method(api, "saveConfig", () => writing.promise);
+  t.mock.method(api, "getConfig", () => reading.promise);
+  t.mock.method(api, "imageStatus", async () => ({ enabled: false, available: false, online: false, profiles: [] }));
+  const saving = saveConfig({ model: "new-model" });
+  const loading = loadConfig();
+  writing.resolve({ model: "new-model", configured: true, has_key: true, echo: false });
+  await saving;
+  reading.resolve({ model: "old-model", has_key: false, echo: true }); await loading;
+  assert.equal(game.config.model, "new-model"); assert.equal(game.echo, false);
+});
+
+test("首次打开未配置环境会弹出设置，主动选择演示后不会重复弹出", async (t) => {
+  t.mock.method(api, "listModules", async () => ({ modules: [] }));
+  t.mock.method(api, "getConfig", async () => ({ llm_mode: "api", configured: false, has_key: false, echo: true, image_generation: { enabled: false } }));
+  await bootstrap(); assert.equal(game.settingsOpen, true);
+  game.settingsOpen = false;
+  t.mock.method(api, "getConfig", async () => ({ llm_mode: "demo", configured: false, has_key: false, echo: true, image_generation: { enabled: false } }));
+  await bootstrap(); assert.equal(game.settingsOpen, false);
+});
+
+test("模型表单留空保留密钥，显式清除、无需认证和专用登录不误传密钥", () => {
+  const cfg = { llm_mode: "api", base_url: "https://example.invalid/v1", model: "a", api_key_tail: "abcd", has_api_key: true };
+  const form = modelForm(cfg);
+  assert.equal(form.api_key, ""); assert.equal("api_key" in modelPatch(form, cfg), false);
+  form.clear_api_key = true; assert.equal(modelPatch(form, cfg).api_key, "");
+  form.clear_api_key = false; form.api_auth = "none"; form.api_key = "new-secret";
+  assert.equal(modelPatch(form, cfg).api_key, "");
+  form.llm_mode = "kimi-oauth";
+  const login = modelPatch(form, cfg);
+  assert.equal("api_key" in login, false); assert.equal(login.model, "k3");
+  form.llm_mode = "demo"; assert.equal("api_key" in modelPatch(form, cfg), false);
 });

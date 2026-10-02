@@ -62,9 +62,10 @@ function text(g) {
     </div>
 
     <div class="actions">
+      <button class="model-btn" :title="game.config?.configured ? game.config.base_url : '配置文字大模型 API'" @click="game.settingsOpen = true">{{ game.config?.configured ? `模型：${game.config.model}` : game.config?.llm_mode === 'demo' ? '演示模式' : '配置大模型 API' }}</button>
       <button class="icon-btn" title="收起/展开左栏" @click="game.leftCollapsed = !game.leftCollapsed">◧</button>
       <button class="icon-btn" title="收起/展开右栏" @click="game.rightCollapsed = !game.rightCollapsed">◨</button>
-      <button class="icon-btn" title="设置" @click="game.settingsOpen = true">⚙</button>
+      <button class="icon-btn" title="设置" aria-label="设置" @click="game.settingsOpen = true">⚙</button>
     </div>
   </header>
 </template>
@@ -150,6 +151,7 @@ function text(g) {
 .vital-text { color: var(--text-dim); min-width: 46px; text-align: right; font-variant-numeric: tabular-nums; }
 
 .actions { display: flex; gap: 6px; }
+.model-btn { color: var(--brass); border: 1px solid var(--line); border-radius: 8px; padding: 0 9px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: #171c24; cursor: pointer; font-size: 11px; }
 .icon-btn {
   width: 30px;
   height: 30px;

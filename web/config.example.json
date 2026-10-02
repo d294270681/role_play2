@@ -1,0 +1,23 @@
+{
+  "llm_mode": "api",
+  "api_auth": "bearer",
+  "base_url": "",
+  "api_key": "",
+  "model": "",
+  "temperature": 0.8,
+  "stream": true,
+  "timeout": 180,
+  "kimi_oauth": {
+    "enabled": false
+  },
+  "comfy_url": "http://127.0.0.1:8188",
+  "image_generation": {
+    "mode": "internal",
+    "enabled": false,
+    "configured_at": null,
+    "profile": "z-image-turbo",
+    "device": 0,
+    "port": 8188,
+    "startup_timeout": 120
+  }
+}

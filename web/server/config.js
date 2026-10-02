@@ -2,24 +2,18 @@
  * 配置读写：web/config.json（不存在时自动生成模板），api_key 只以掩码形式对外。
  *
  * 字段：
- *   base_url   OpenAI 兼容接口地址（默认 https://api.openai.com/v1）
- *   api_key    为空时看 kimi_oauth：启用 OAuth 就走 Kimi 凭证，两者都没有才走回声调试模式
+ *   llm_mode   api / kimi-oauth / demo；默认 api（未配置时演示）
+ *   base_url   用户选择的 OpenAI 兼容接口地址；默认留空
+ *   api_key    API 密钥，可选；无认证的本地兼容服务也可使用
  *   model      模型名
  *   temperature 0–2
  *   comfy_url  本机 ComfyUI 地址（默认 http://127.0.0.1:8188）
  * 可选扩展键：stream（默认 true）、timeout（秒，默认 180）、
  *   kimi_oauth {enabled?, credentials_path?, token_url?, client_id?}（缺省值见 auth.js）。
  *
- * 想直接复用本机 Kimi Code 的 OAuth 凭证（不用手抄 api_key）时，web/config.json 这样写：
- *   {
- *     "base_url": "https://api.kimi.com/coding/v1",
- *     "api_key": "",
- *     "model": "k3",
- *     "temperature": 1,
- *     "kimi_oauth": { "credentials_path": "C:/Users/DMH/.kimi-code/credentials/kimi-code.json" }
- *   }
- * 注意 k3 只接受 temperature=1（写别的值模型接口会 400 报 invalid temperature）。
- * 省略 kimi_oauth 时也会自动检测默认凭证文件是否存在；写 { "enabled": false } 可强制关掉。
+ * Kimi 登录使用 llm_mode: "kimi-oauth"，凭证默认从当前用户目录读取。
+ * 该专用模式维持既有 Kimi Code 接口与 temperature=1。
+ * Kimi 登录必须明确选择，不因本机存在凭证而自动启用。
  * GET /api/config 的掩码视图只给 auth_mode / has_key / echo，绝不包含任何 token。
  *
  * 写盘与 web/engine/gm.py（M2）一致：先写 .tmp 再原子改名，JSON 为 ensure_ascii=False 风格（UTF-8 原样）。
@@ -36,11 +30,26 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const WEB_DIR = path.resolve(__dirname, "..");
 export const CONFIG_PATH = path.join(WEB_DIR, "config.json");
+export const LLM_MODES = ["api", "kimi-oauth", "demo"];
+
+export function normalizeBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "").replace(/\/chat\/completions$/, "");
+}
+
+function validBaseUrl(value) {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; }
+}
 
 export const DEFAULT_CONFIG = {
-  base_url: "https://api.openai.com/v1",
+  llm_mode: "api",
+  api_auth: "bearer",
+  base_url: "",
   api_key: "",
-  model: "gpt-4o-mini",
+  model: "",
+  kimi_oauth: { enabled: false },
   temperature: 0.8,
   comfy_url: "http://127.0.0.1:8188",
   image_generation: imageSettings(),
@@ -50,18 +59,11 @@ export const DEFAULT_CONFIG = {
 
 /** 图片功能默认关闭；网页检测配置成功后才显式启用。 */
 export function templateConfig() {
-  return {
-    base_url: DEFAULT_CONFIG.base_url,
-    api_key: DEFAULT_CONFIG.api_key,
-    model: DEFAULT_CONFIG.model,
-    temperature: DEFAULT_CONFIG.temperature,
-    comfy_url: DEFAULT_CONFIG.comfy_url,
-    image_generation: imageSettings(),
-  };
+  return defaultConfig();
 }
 
 export function defaultConfig() {
-  return { ...DEFAULT_CONFIG, image_generation: imageSettings() };
+  return { ...DEFAULT_CONFIG, kimi_oauth: { enabled: false }, image_generation: imageSettings() };
 }
 
 function toInt(v, dflt = 0) {
@@ -79,38 +81,71 @@ function toFloat(v, dflt = 0, lo = null, hi = null) {
 
 /** 补齐默认值、修剪字符串、钳制温度与超时；kimi_oauth 规范化为 auth.js 的三字段结构。 */
 export function normalizeConfig(config) {
+  const raw = config && typeof config === "object" && !Array.isArray(config) ? config : {};
   const cfg = defaultConfig();
   if (config && typeof config === "object" && !Array.isArray(config)) {
     for (const [k, v] of Object.entries(config)) {
       if (v !== null && v !== undefined) cfg[k] = v;
     }
   }
-  cfg.base_url = String(cfg.base_url || DEFAULT_CONFIG.base_url).trim().replace(/\/+$/, "");
+  // 保留旧文件明确启用的 Kimi 配置；不存在显式选择时不扫描本机登录。
+  const legacyOAuth = authMod.normalizeOAuthSettings(raw.kimi_oauth);
+  cfg.llm_mode = LLM_MODES.includes(raw.llm_mode) ? raw.llm_mode
+    : legacyOAuth?.enabled && !String(raw.api_key || "").trim() && normalizeBaseUrl(raw.base_url) === authMod.KIMI_CHAT_BASE_URL ? "kimi-oauth" : "api";
+  cfg.base_url = normalizeBaseUrl(cfg.base_url);
+  cfg.api_auth = raw.api_auth === "none" ? "none" : "bearer";
   cfg.api_key = String(cfg.api_key || "").trim();
-  cfg.model = String(cfg.model || DEFAULT_CONFIG.model).trim();
+  cfg.model = String(cfg.model || "").trim();
   cfg.temperature = toFloat(cfg.temperature, DEFAULT_CONFIG.temperature, 0, 2);
   cfg.comfy_url = String(cfg.comfy_url || DEFAULT_CONFIG.comfy_url).trim().replace(/\/+$/, "");
   cfg.image_generation = imageSettings(cfg.image_generation);
   if (cfg.image_generation.mode === "internal") cfg.comfy_url = `http://127.0.0.1:${cfg.image_generation.port}`;
   cfg.stream = cfg.stream !== false;
   cfg.timeout = Math.max(5, toInt(cfg.timeout, DEFAULT_CONFIG.timeout));
-  if ("kimi_oauth" in cfg) {
-    const oauth = authMod.normalizeOAuthSettings(cfg.kimi_oauth);
-    if (oauth) cfg.kimi_oauth = oauth;
-    else delete cfg.kimi_oauth; // 写成 null / 字符串等无效值 → 退回「自动检测」
+  cfg.kimi_oauth = authMod.normalizeOAuthSettings(cfg.kimi_oauth) || authMod.normalizeOAuthSettings({ enabled: false });
+  cfg.kimi_oauth.enabled = cfg.llm_mode === "kimi-oauth";
+  if (cfg.llm_mode === "kimi-oauth") {
+    cfg.base_url = authMod.KIMI_CHAT_BASE_URL;
+    cfg.model ||= authMod.KIMI_MODEL;
+    cfg.temperature = 1;
   }
   return cfg;
 }
 
 /**
- * Kimi OAuth 是否启用：配置里显式写了 kimi_oauth 就听它的（enabled:false 可关），
- * 没写则自动检测默认凭证文件在不在。
+ * 仅明确选择 Kimi 登录时启用，且登录 token 只发往 Kimi 固定接口。
  */
 export function oauthActive(config = null) {
   const cfg = config && typeof config === "object" ? normalizeConfig(config) : loadConfig();
-  const oauth = cfg.kimi_oauth;
-  if (oauth) return oauth.enabled !== false;
-  return authMod.credentialsExist(null);
+  return cfg.llm_mode === "kimi-oauth";
+}
+
+export function modelConfigured(config) {
+  const cfg = normalizeConfig(config);
+  if (cfg.llm_mode === "demo") return false;
+  if (cfg.llm_mode === "kimi-oauth") return authMod.credentialsExist(cfg);
+  return validBaseUrl(cfg.base_url) && Boolean(cfg.model) && (cfg.api_auth === "none" || Boolean(cfg.api_key));
+}
+
+/** 保存和测试共用相同的合并规则；测试不会写盘。 */
+export function mergeConfigPatch(config, patch) {
+  const previous = normalizeConfig(config);
+  const cfg = structuredClone(previous);
+  if (patch && typeof patch === "object" && !Array.isArray(patch)) {
+    if ("llm_mode" in patch && !LLM_MODES.includes(patch.llm_mode)) throw Object.assign(new Error("请选择通用 API、Kimi 登录或演示模式"), { status: 400 });
+    if ("api_auth" in patch && !["bearer", "none"].includes(patch.api_auth)) throw Object.assign(new Error("API 认证方式必须是 bearer 或 none"), { status: 400 });
+    for (const key of ["llm_mode", "api_auth", "base_url", "api_key", "model", "temperature", "comfy_url", "image_generation", "stream", "timeout", "kimi_oauth"]) {
+      if (patch[key] !== null && patch[key] !== undefined) cfg[key] = key === "image_generation" ? imageSettings({ ...cfg.image_generation, ...patch[key] }) : patch[key];
+    }
+    const changed = cfg.llm_mode !== previous.llm_mode || cfg.api_auth !== previous.api_auth || normalizeBaseUrl(cfg.base_url) !== previous.base_url;
+    if (changed && !("api_key" in patch)) cfg.api_key = "";
+    if (cfg.llm_mode === "kimi-oauth" && cfg.llm_mode !== previous.llm_mode && !("model" in patch)) cfg.model = authMod.KIMI_MODEL;
+  }
+  const next = normalizeConfig(cfg);
+  const llmChanged = ["llm_mode", "api_auth", "base_url", "api_key", "model", "kimi_oauth"].some((key) => patch && Object.hasOwn(patch, key));
+  if (llmChanged && next.llm_mode === "api" && next.base_url && !validBaseUrl(next.base_url)) throw Object.assign(new Error("API 地址必须是 http/https 基础地址，不含账号密码、查询参数或片段"), { status: 400 });
+  if (llmChanged && next.llm_mode === "api" && (next.base_url || next.model || next.api_key) && (!next.base_url || !next.model)) throw Object.assign(new Error("请同时填写 API 地址和模型 ID"), { status: 400 });
+  return next;
 }
 
 function writeFile(p, cfg) {
@@ -149,18 +184,11 @@ export function saveConfig(config, configPath = null) {
 }
 
 /**
- * 合并白名单字段后落盘（api_key 传空串表示清除；kimi_oauth 传 false 表示强制关掉 OAuth），
+ * 合并白名单字段后落盘；api_key 空串清除密钥，llm_mode 明确控制认证模式。
  * 返回规范化后的新配置。
  */
 export function updateConfig(patch, configPath = null) {
-  const cfg = loadConfig(configPath);
-  if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    for (const key of ["base_url", "api_key", "model", "temperature", "comfy_url", "image_generation", "stream", "timeout", "kimi_oauth"]) {
-      if (key in patch && patch[key] !== null && patch[key] !== undefined) {
-        cfg[key] = key === "image_generation" ? imageSettings({ ...cfg.image_generation, ...patch[key] }) : patch[key];
-      }
-    }
-  }
+  const cfg = mergeConfigPatch(loadConfig(configPath), patch);
   saveConfig(cfg, configPath);
   return normalizeConfig(cfg);
 }
@@ -169,8 +197,11 @@ export function updateConfig(patch, configPath = null) {
 export function maskedConfig(config) {
   const cfg = normalizeConfig(config);
   const key = cfg.api_key || "";
-  const oauth = oauthActive(cfg);
+  const configured = modelConfigured(cfg);
+  const mode = cfg.llm_mode;
   return {
+    llm_mode: mode,
+    api_auth: cfg.api_auth,
     base_url: cfg.base_url,
     model: cfg.model,
     temperature: cfg.temperature,
@@ -178,15 +209,17 @@ export function maskedConfig(config) {
     timeout: cfg.timeout,
     comfy_url: cfg.comfy_url,
     image_generation: { ...cfg.image_generation },
-    has_key: Boolean(key) || oauth,
-    api_key_tail: key.length >= 4 ? key.slice(-4) : (key ? "***" : ""),
-    echo: !key && !oauth,
-    auth_mode: key ? "api-key" : (oauth ? "kimi-oauth" : "echo"),
+    configured,
+    has_api_key: Boolean(key),
+    has_key: configured, // 兼容旧前端字段：表示文字模型已配置。
+    api_key_tail: key.length > 4 ? key.slice(-4) : (key ? "***" : ""),
+    echo: !configured,
+    auth_mode: mode === "demo" ? "echo" : !configured ? "unconfigured" : mode === "kimi-oauth" ? "kimi-oauth" : cfg.api_auth === "bearer" ? "api-key" : "no-auth",
+    kimi_credentials_available: mode === "kimi-oauth" && authMod.credentialsExist(cfg),
+    kimi_defaults: { base_url: authMod.KIMI_CHAT_BASE_URL, model: authMod.KIMI_MODEL },
   };
 }
 
 export function configHasKey(config = null) {
-  const cfg = config && typeof config === "object" ? config : loadConfig();
-  if (String(cfg.api_key || "").trim()) return true;
-  return oauthActive(cfg);
+  return modelConfigured(config && typeof config === "object" ? config : loadConfig());
 }

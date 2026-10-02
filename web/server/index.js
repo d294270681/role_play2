@@ -29,6 +29,7 @@ import { ApiError } from "./routes/shared.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.resolve(__dirname, "..");
 const CLIENT_DIST = path.join(WEB_DIR, "client", "dist");
+const SETUP_GUIDE = path.resolve(WEB_DIR, "..", "docs", "环境配置指引.md");
 const DEFAULT_PORT = 8000;
 
 const PLACEHOLDER_HTML = `<!doctype html>
@@ -60,6 +61,12 @@ export function createApp() {
   app.use("/api", apiRouter);
   app.use("/api", (req, res) => {
     res.status(404).json({ error: `未知接口：${req.method} /api${req.path}` });
+  });
+
+  app.get("/guide", (req, res, next) => {
+    res.type("text/plain; charset=utf-8").sendFile(SETUP_GUIDE, (err) => {
+      if (err) next(err);
+    });
   });
 
   app.use("/assets", express.static(comfy.ASSETS_ROOT, { index: false, fallthrough: true }));
@@ -101,7 +108,7 @@ export function createApp() {
     let message;
     if (err?.type === "entity.parse.failed") {
       status = 400;
-      message = `请求体不是合法 JSON：${err.message}`;
+      message = "请求体不是合法 JSON";
     } else if (err?.type === "entity.too.large") {
       status = 413;
       message = "请求体过大";
@@ -133,6 +140,7 @@ export function main(argv = process.argv.slice(2)) {
   const server = app.listen(port, "127.0.0.1", () => {
     console.log(`[RPG] 后端已启动：http://127.0.0.1:${port}/`);
     console.log(`[RPG] 配置：${configMod.CONFIG_PATH}（认证模式：${configMod.maskedConfig(cfg).auth_mode}）`);
+    console.log(`[RPG] 文字模型：${cfg.llm_mode === "demo" ? "演示模式" : configMod.modelConfigured(cfg) ? `${cfg.model}（${cfg.base_url}）` : "未配置，请在网页设置中填写模型 API"}`);
     console.log(`[RPG] 前端：${fs.existsSync(CLIENT_DIST) ? CLIENT_DIST : "web/client/dist 尚未部署（/ 显示占位页）"}`);
     console.log(`[RPG] 静态资源：${comfy.ASSETS_ROOT} → /assets`);
     console.log(`[RPG] 图片生成：${cfg.image_generation.enabled ? "已配置，生成图片时按需启动" : "未配置（网页设置中可启用）"}`);

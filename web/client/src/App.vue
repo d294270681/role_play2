@@ -43,9 +43,9 @@ const demoMode = computed(() => Boolean(game.echo));
 
       <div v-if="demoMode" class="demo-banner">
         <span class="dot" />
-        <b>演示模式</b>
+        <b>{{ game.config?.llm_mode === 'demo' ? '演示模式' : '文字模型未配置' }}</b>
         <span class="sep">·</span>
-        未配置 API Key，叙述由本地回声引擎生成，判定与状态结算照常走真实规则。
+        当前使用本地示例叙述，判定与存档功能正常。可在设置中选择模型服务并保存 API 配置。
         <button class="link" @click="game.settingsOpen = true">去设置 →</button>
       </div>
 

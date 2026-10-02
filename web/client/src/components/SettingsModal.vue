@@ -2,36 +2,29 @@
 import { computed, ref, watch } from "vue";
 
 import { cancelImageSetup, checkImageEnvironment, controlImageRuntime, disableImage, game, loadConfig, loadImageStatus, saveConfig, setupImage } from "../store.js";
+import api from "../api.js";
+import { modelForm, modelPatch } from "../modelConfig.js";
 
 const props = defineProps({ show: { type: Boolean, default: false } });
 const emit = defineEmits(["update:show"]);
 
-const form = ref({
-  base_url: "",
-  api_key: "",
-  model: "",
-  temperature: 0.8,
-  stream: true,
-  timeout: 180,
-  image_profile: "z-image-turbo",
-});
+const form = ref({ ...modelForm(), image_profile: "z-image-turbo" });
 const saving = ref(false);
 const busyProbe = ref(false);
 const wantLocal = ref(false);
+const probingModel = ref(false);
+const modelProbe = ref(null);
+let probeRevision = 0;
+watch(() => [form.value.llm_mode, form.value.api_auth, form.value.base_url, form.value.model, form.value.api_key, form.value.clear_api_key, form.value.temperature, form.value.timeout, form.value.stream], () => { probeRevision += 1; modelProbe.value = null; });
 
 watch(
   () => props.show,
   async (open) => {
     if (!open) return;
-    const cfg = game.config || (await loadConfig());
+    const cfg = await loadConfig();
     if (!cfg) return;
     form.value = {
-      base_url: cfg.base_url || "",
-      api_key: "",
-      model: cfg.model || "",
-      temperature: Number(cfg.temperature ?? 0.8),
-      stream: cfg.stream !== false,
-      timeout: Number(cfg.timeout ?? 180),
+      ...modelForm(cfg),
       image_profile: cfg.image_generation?.profile || "z-image-turbo",
     };
     await loadImageStatus();
@@ -42,23 +35,26 @@ watch(
 
 const keyHint = computed(() => {
   const cfg = game.config;
-  if (!cfg?.has_key) return "未配置";
+  if (!cfg?.has_api_key) return "未保存密钥";
   return cfg.api_key_tail ? `已配置 · 尾号 ${cfg.api_key_tail}` : "已配置";
 });
 
 async function submit() {
   saving.value = true;
-  const patch = {
-    base_url: form.value.base_url.trim(),
-    model: form.value.model.trim(),
-    temperature: Number(form.value.temperature),
-    stream: Boolean(form.value.stream),
-    timeout: Number(form.value.timeout),
-  };
-  if (form.value.api_key.trim()) patch.api_key = form.value.api_key.trim();
-  await saveConfig(patch);
-  form.value.api_key = "";
-  saving.value = false;
+  try {
+    const cfg = await saveConfig(modelPatch(form.value, game.config));
+    if (cfg) Object.assign(form.value, modelForm(cfg));
+  } finally { saving.value = false; }
+}
+
+async function testModel() {
+  probingModel.value = true;
+  const revision = probeRevision;
+  try {
+    const result = await api.testModelConfig(modelPatch(form.value, game.config));
+    if (revision === probeRevision) modelProbe.value = { ok: true, message: result.message };
+  } catch (e) { if (revision === probeRevision) modelProbe.value = { ok: false, message: e.message }; }
+  finally { probingModel.value = false; }
 }
 
 const imageOptions = computed(() => (game.comfy?.profiles || []).map((p) => ({
@@ -107,44 +103,47 @@ async function cancelSetup() {
   >
     <div class="settings">
       <section>
-        <h4 class="section-label">模型接入</h4>
+        <h4 class="section-label">文字大模型</h4>
         <div class="status-row">
-          <n-tag :type="game.hasKey ? 'success' : 'warning'" size="small" round>
-            API Key：{{ keyHint }}
-          </n-tag>
-          <n-tag v-if="game.echo" type="warning" size="small" round>演示模式（回声引擎）</n-tag>
-          <n-tag v-else type="success" size="small" round>真实模型</n-tag>
+          <n-tag :type="game.config?.configured ? 'success' : 'warning'" size="small" round>{{ game.config?.configured ? `当前模型：${game.config.model}` : game.config?.llm_mode === 'demo' ? '当前使用演示模式' : '文字模型尚未配置' }}</n-tag>
+          <a class="guide-link" href="/guide" target="_blank" rel="noopener">环境配置指引 ↗</a>
         </div>
 
-        <label class="lbl">接口地址 base_url</label>
-        <n-input v-model:value="form.base_url" placeholder="https://api.openai.com/v1" />
-
-        <label class="lbl">API Key{{ game.hasKey ? "（留空表示不改动）" : "" }}</label>
-        <n-input
-          v-model:value="form.api_key"
-          type="password"
-          show-password-on="click"
-          :placeholder="game.hasKey ? '已保存，留空则不修改' : 'sk-…（留空即演示模式）'"
-        />
-
-        <div class="grid2">
-          <div>
-            <label class="lbl">模型 model</label>
-            <n-input v-model:value="form.model" placeholder="gpt-4o-mini" />
+        <label class="lbl">接入方式</label>
+        <n-select v-model:value="form.llm_mode" :disabled="saving || probingModel" :options="[{label:'通用模型 API（OpenAI 兼容）',value:'api'},{label:'Kimi Code 登录（可选）',value:'kimi-oauth'},{label:'演示模式（不连接大模型）',value:'demo'}]" />
+        <template v-if="form.llm_mode === 'api'">
+          <p class="hint">填写你选择的模型服务。支持云端 API、兼容网关或本地模型服务，模型 ID 由服务商提供。</p>
+          <label class="lbl" for="llm-api-url">API 基础地址</label>
+          <n-input v-model:value="form.base_url" :input-props="{id:'llm-api-url'}" placeholder="https://你的模型服务地址/v1" :disabled="saving || probingModel" />
+          <label class="lbl" for="llm-model-id">模型 ID</label>
+          <n-input v-model:value="form.model" :input-props="{id:'llm-model-id'}" placeholder="服务商提供的模型 ID" :disabled="saving || probingModel" />
+          <label class="lbl">API 认证</label>
+          <n-select v-model:value="form.api_auth" :disabled="saving || probingModel" :options="[{label:'API Key（Bearer）',value:'bearer'},{label:'无需密钥（例如本地服务）',value:'none'}]" />
+          <template v-if="form.api_auth === 'bearer'">
+            <label class="lbl" for="llm-api-key">API Key · {{ keyHint }}</label>
+            <n-input v-model:value="form.api_key" :input-props="{id:'llm-api-key',autocomplete:'off'}" type="password" show-password-on="click" placeholder="填写 API Key；同一接口留空可保留已存密钥" :disabled="form.clear_api_key || saving || probingModel" />
+            <n-checkbox v-if="game.config?.has_api_key" v-model:checked="form.clear_api_key" class="clear-key" :disabled="saving || probingModel">保存时清除已有密钥</n-checkbox>
+            <p class="hint">更换接口地址或接入方式时，旧密钥会清除，需要填写新服务的密钥。</p>
+          </template>
+        </template>
+        <p v-else-if="form.llm_mode === 'kimi-oauth'" class="hint">
+          仅在选择此方式后使用本机 Kimi Code 登录。{{ game.config?.kimi_credentials_available ? '已找到登录凭证。' : '选择后保存，若未登录请先登录 Kimi Code；也可选择通用 API 填写密钥。' }}不需要填写 API Key，登录凭证只用于 Kimi 接口。
+        </p>
+        <p v-else class="hint">演示模式使用本地示例叙述，判定和存档功能可正常使用。随时可以回来配置真实模型 API。</p>
+        <template v-if="form.llm_mode !== 'demo'">
+          <div class="grid2">
+            <div>
+              <label class="lbl">temperature（{{ form.llm_mode === 'kimi-oauth' ? '1.00' : Number(form.temperature).toFixed(2) }}）</label>
+              <input v-model.number="form.temperature" class="slider" type="range" min="0" max="2" step="0.05" :disabled="form.llm_mode === 'kimi-oauth' || saving || probingModel" />
+            </div>
+            <div><label class="lbl">超时（秒）</label><n-input-number v-model:value="form.timeout" :min="5" :max="900" :disabled="saving || probingModel" style="width:100%" /></div>
           </div>
-          <div>
-            <label class="lbl">超时（秒）</label>
-            <n-input-number v-model:value="form.timeout" :min="5" :max="900" style="width: 100%" />
-          </div>
-        </div>
-
-        <label class="lbl">temperature（{{ Number(form.temperature).toFixed(2) }}）</label>
-        <input v-model.number="form.temperature" class="slider" type="range" min="0" max="2" step="0.05" />
-
-        <label class="row">
-          <n-switch v-model:value="form.stream" />
-          <span>流式输出（关闭则等模型一次性返回）</span>
-        </label>
+          <label class="row"><n-switch v-model:value="form.stream" :disabled="saving || probingModel" /><span>流式输出（关闭则等待完整回复）</span></label>
+          <div class="actions"><n-button :loading="probingModel" :disabled="saving || game.busy" @click="testModel">测试连接</n-button></div>
+          <p class="hint">测试会发送一条短请求，按服务商计费，最多等待 30 秒。使用当前填写的值，不会保存配置。</p>
+          <p v-if="modelProbe" class="probe-result" :class="{failed:!modelProbe.ok}">{{ modelProbe.message }}</p>
+        </template>
+        <p class="hint">点击「保存配置」后写入 web/config.json，下个回合使用新配置，重启后自动恢复。</p>
       </section>
 
       <section>
@@ -218,7 +217,7 @@ async function cancelSetup() {
     <template #footer>
       <n-space justify="end">
         <n-button @click="emit('update:show', false)">关闭</n-button>
-        <n-button type="primary" :loading="saving" @click="submit">保存配置</n-button>
+        <n-button type="primary" :loading="saving" :disabled="probingModel || game.busy" @click="submit">保存配置</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -245,6 +244,9 @@ section { display: flex; flex-direction: column; }
 .api-advice, .install-error { font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; white-space: pre-wrap; }
 .install-error { color: #ed8585; }
 .install-progress strong, .install-progress p { font-size: 12px; }
+.guide-link { color: var(--brass); font-size: 12px; text-decoration: none; }
+.clear-key { margin-top: 8px; font-size: 12px; }
+.probe-result { font-size: 12px; color: #7dba92; overflow-wrap: anywhere; }
 
 .slider {
   width: 100%;

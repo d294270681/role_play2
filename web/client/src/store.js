@@ -185,8 +185,9 @@ function absorb(payload) {
   game.map = payload.map || { locations: [], routes: [] };
   game.characters = payload.characters || [];
   game.events = payload.events || [];
-  game.hasKey = Boolean(payload.has_key);
-  game.echo = Boolean(payload.echo);
+  // 独立配置保存后，迟到的存档快照不能把模型状态改回旧值。
+  game.hasKey = Boolean(game.config ? game.config.has_key : payload.has_key);
+  game.echo = Boolean(game.config ? game.config.echo : payload.echo);
   // 独立状态检测已建立后，存档快照里的旧服务状态不再覆盖它。
   if (!game.comfy?.profiles) game.comfy = payload.comfy || { online: false, url: "" };
 }
@@ -326,7 +327,7 @@ function seedOpening() {
   }
   for (const warn of info?.warnings || []) pushStream({ kind: "note", level: "warn", text: `本册提示：${warn}` });
   if (game.echo) {
-    pushStream({ kind: "note", text: "演示模式：尚未配置 API Key，叙述由本地回声引擎生成。可在右上角「设置」里填写。" });
+    pushStream({ kind: "note", text: "当前使用本地演示叙述，可在右上角「设置」里选择模型服务并保存 API 配置。" });
   }
 }
 
@@ -632,9 +633,14 @@ export async function generateImage({ kind = "scene", prompt = "", name = "", an
 // ---------------------------------------------------------------------------
 // 配置
 // ---------------------------------------------------------------------------
+let _configRequest = 0;
+let _configSaveRequest = 0;
 export async function loadConfig() {
+  const request = ++_configRequest;
   try {
-    game.config = await api.getConfig();
+    const cfg = await api.getConfig();
+    if (request !== _configRequest) return game.config;
+    game.config = cfg;
     game.hasKey = Boolean(game.config?.has_key);
     game.echo = Boolean(game.config?.echo);
     const enabled = game.config?.image_generation?.enabled === true;
@@ -769,8 +775,13 @@ export async function controlImageRuntime(action) {
 }
 
 export async function saveConfig(patch) {
+  const request = ++_configSaveRequest;
+  _configRequest += 1;
   try {
-    game.config = await api.saveConfig(patch);
+    const cfg = await api.saveConfig(patch);
+    if (request !== _configSaveRequest) return game.config;
+    _configRequest += 1;
+    game.config = cfg;
     game.hasKey = Boolean(game.config?.has_key);
     game.echo = Boolean(game.config?.echo);
     notify("配置已保存", "success");
@@ -787,6 +798,8 @@ export async function saveConfig(patch) {
 // ---------------------------------------------------------------------------
 export async function bootstrap() {
   try {
+    await loadConfig();
+    if (game.config && !game.config.configured && game.config.llm_mode !== "demo") game.settingsOpen = true;
     await loadModules();
     if (!game.module) {
       game.loaded = false;
@@ -800,7 +813,6 @@ export async function bootstrap() {
     game.slot = hit ? hit.slot : preferred;
     remember();
     const context = session();
-    await loadConfig();
     if (!isCurrent(context)) return;
     if (hit) {
       await openSlot(hit.slot, { silent: true });

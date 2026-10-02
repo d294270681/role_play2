@@ -1,10 +1,12 @@
 import { createApp } from "vue";
 import {
   NButton,
+  NCheckbox,
   NConfigProvider,
   NInput,
   NInputNumber,
   NModal,
+  NProgress,
   NSelect,
   NSpace,
   NSwitch,
@@ -18,7 +20,7 @@ import "./styles.css";
 
 /** 只注册模板里真正用到的组件，避免整包引入。 */
 const naive = {
-  NButton, NConfigProvider, NInput, NInputNumber, NModal,
+  NButton, NCheckbox, NConfigProvider, NInput, NInputNumber, NModal, NProgress,
   NSelect, NSpace, NSwitch, NTabPane, NTabs, NTag,
 };
 

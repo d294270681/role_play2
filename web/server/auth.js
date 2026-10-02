@@ -2,7 +2,7 @@
  * Kimi OAuth 凭证提供者（web/server/auth.js）。
  *
  * 直接复用本机 Kimi Code CLI 的 OAuth 凭证，让游戏后端不用另配 api_key：
- *   凭证文件  C:/Users/DMH/.kimi-code/credentials/kimi-code.json
+ *   凭证文件  ~/.kimi-code/credentials/kimi-code.json（当前系统用户）
  *             {access_token, refresh_token, expires_in(900), expires_at(epoch 秒), scope, token_type}
  *   刷新端点  POST https://auth.kimi.com/api/oauth/token
  *             表单 grant_type=refresh_token & refresh_token & client_id=17e5f671-…
@@ -20,9 +20,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 
 /** 本机 Kimi Code 的凭证文件（可在 config.json 的 kimi_oauth.credentials_path 覆盖）。 */
-export const DEFAULT_CREDENTIALS_PATH = "C:/Users/DMH/.kimi-code/credentials/kimi-code.json";
+export const DEFAULT_CREDENTIALS_PATH = path.join(os.homedir(), ".kimi-code", "credentials", "kimi-code.json");
 export const DEFAULT_TOKEN_URL = "https://auth.kimi.com/api/oauth/token";
 export const DEFAULT_CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098";
 /** 聊天端点前缀与模型名（写进 web/config.json 用）。 */
@@ -52,12 +53,12 @@ export function redact(text, secrets) {
   let out = String(text ?? "");
   for (const s of [].concat(secrets || [])) {
     const v = typeof s === "string" ? s : "";
-    if (v.length >= 8) out = out.split(v).join("***");
+    if (v.length > 0) out = out.split(v).join("***");
   }
   return out;
 }
 
-/** kimi_oauth 配置的规范化结果；null 表示「配置里没写这个键」（走自动检测）。 */
+/** kimi_oauth 配置的规范化结果；null 表示配置里没写这个键。是否启用由 llm_mode 决定。 */
 export function normalizeOAuthSettings(raw) {
   if (raw === null || raw === undefined) return null;
   let obj = raw;
@@ -84,7 +85,7 @@ function settingsOf(options) {
   return normalizeOAuthSettings(options) || normalizeOAuthSettings({});
 }
 
-/** 凭证文件是否可读（自动检测用）。 */
+/** 明确选择 Kimi 登录后检查凭证文件是否存在；读取有效性由实际连接验证。 */
 export function credentialsExist(options = null) {
   try {
     return fs.existsSync(settingsOf(options).credentials_path);

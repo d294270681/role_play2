@@ -1,0 +1,18 @@
+# RPG 文字冒险
+
+本地运行的文字冒险游戏：Vue 网页、Node.js 后端、规则引擎与存档。文字模型的 API 地址、模型 ID 和密钥由用户启动后在网页配置，保存到 `web/config.json`；新环境默认未配置，不自动复用本机 Kimi 登录。
+
+首次使用请阅读 [环境配置指引](docs/环境配置指引.md)。安装 Node.js 22 或更高版本后，在 Windows 上运行 `安装项目依赖.bat`，再运行 `启动游戏.bat`，浏览器打开 `http://127.0.0.1:8000/`。完整工程若已带项目内 Node、Web 依赖和前端构建，可直接启动。
+
+网页设置支持通用 OpenAI Chat Completions 兼容 API、明确选择的 Kimi Code 登录和本地演示模式。配置未完成时会自动打开设置；连接测试通过后仍需点击「保存配置」。模型配置修改在下一次行动生效。
+
+本地图片生成功能默认关闭。用户在网页选择后，先检测硬件，达标再安装工程内的 Python、ComfyUI 和权重；生成图片时才启动模型。详细流程与目录说明见 [本地图片生成说明](ai/README.md)。
+
+| 内容 | 位置 |
+|---|---|
+| 用户环境与 API 配置 | [docs/环境配置指引.md](docs/环境配置指引.md) |
+| 无密钥配置示例 | [web/config.example.json](web/config.example.json) |
+| 网页 / 后端 | `web/client/src/` / `web/server/` |
+| 规则与冒险本 | `core/` / [modules/README.md](modules/README.md) |
+| 可选本地生图 | [ai/README.md](ai/README.md) |
+| 开发记录 | [PROGRESS.md](PROGRESS.md) |

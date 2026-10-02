@@ -4,9 +4,9 @@
  * 设计对齐分支 feat/rpg-backend-gm-protocol-and-http-api-w2 的 web/engine/gm.py（M2，974 行），
  * 引擎部分改用 M4 的 Node 移植（web/server/engine/*.js）。本版新增：
  * - 协议 JSON 增加 image_prompt 键：非空时回合结束后异步调 comfy.js 生成插图并发 image 事件；
- * - LLM 客户端用 Node 22 原生 fetch 解析 SSE（无 api_key 时回声调试模式）；
- * - 凭证来源新增 Kimi OAuth：api_key 为空且启用 kimi_oauth 时，Authorization 头由 auth.js 提供
- *   （带 60s 余量自动刷新，过期写回凭证文件），静态 api_key 与回声模式行为不变。
+ * - LLM 客户端用 Node 22 原生 fetch 解析 SSE，支持通用 Bearer API 和无认证的本地接口；
+ * - 显式选择 Kimi 登录时，Authorization 头由 auth.js 提供；
+ * - 未配置模型或显式选择演示模式时，使用本地示例回复。
  *
  * 对外接口：
  *   buildMessages(module, state, action, config, history) -> [messages, meta]
@@ -615,7 +615,7 @@ export class FenceStream {
 // LLM 客户端（OpenAI 兼容；无 api_key 时为回声调试模式）
 // ---------------------------------------------------------------------------
 
-export const ECHO_ACTION_NOTE = "（回声调试模式：未配置 API Key，本回合叙述由本地演示引擎生成；在 /api/config 配置模型后可接入真 LLM。）";
+export const ECHO_ACTION_NOTE = "（演示模式：文字模型尚未配置或已选择演示，本回合由本地演示引擎生成；可在网页设置中接入模型 API。）";
 
 const ECHO_IMAGE_PROMPT = "cinematic scene illustration, tense nighttime encounter in a narrow harbor alley, wet cobblestone, lantern light, crates, a determined young woman in a worn coat, moody atmosphere";
 
@@ -693,20 +693,19 @@ function extractDeltaText(obj) {
   return null;
 }
 
-/** OpenAI 兼容的 chat/completions 客户端；既无 api_key 也无 Kimi OAuth 时自动回声调试。 */
+/** OpenAI 兼容的 chat/completions 客户端；配置未完成或选择演示时使用本地回复。 */
 export class GMClient {
   constructor(config = null) {
     const cfg = configMod.normalizeConfig(config || {});
     this.config = cfg;
     this.base_url = cfg.base_url;
-    this.api_key = cfg.api_key;
+    this.api_key = cfg.llm_mode === "api" && cfg.api_auth === "bearer" ? cfg.api_key : "";
     this.model = cfg.model;
     this.temperature = cfg.temperature;
     this.timeout = Math.max(5, toInt(cfg.timeout, 180));
     this.stream = cfg.stream !== false;
-    // 显式 api_key 优先；api_key 为空且 OAuth 生效（显式配置或自动检测到凭证文件）时走 OAuth。
-    this.oauth = !this.api_key && configMod.oauthActive(cfg) ? authMod.getProvider(cfg) : null;
-    this.echo = !this.api_key && !this.oauth;
+    this.oauth = configMod.oauthActive(cfg) ? authMod.getProvider(cfg) : null;
+    this.echo = !configMod.modelConfigured(cfg);
   }
 
   endpoint() {
@@ -737,7 +736,7 @@ export class GMClient {
     const token = await this.authorizationToken();
     const headers = {
       "Content-Type": "application/json; charset=utf-8",
-      Authorization: `Bearer ${token}`,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       Accept: this.stream ? "text/event-stream" : "application/json",
     };
     let res;
@@ -754,7 +753,7 @@ export class GMClient {
     if (!res.ok) {
       let body = "";
       try {
-        body = authMod.redact((await res.text()).split(/\s+/).join(" ").slice(0, 300), [token]);
+        body = authMod.redact(await res.text(), [token]).split(/\s+/).join(" ").slice(0, 300);
       } catch {
         body = "";
       }
@@ -766,8 +765,8 @@ export class GMClient {
       let data;
       try {
         data = await res.json();
-      } catch (e) {
-        throw new Error(`模型接口返回的不是 JSON：${e?.message ?? e}`);
+      } catch {
+        throw new Error("模型接口返回的不是 JSON，请检查 Chat Completions 兼容地址");
       }
       const text = extractDeltaText(data);
       if (text) yield text;
@@ -881,7 +880,7 @@ export async function* runTurn(module, state, action, config = null, history = n
       yield { type: "note", text: `本回合注入已抽中事件：${pendingUsed.code || ""} ${pendingUsed.name || ""}`.trim() };
     }
     if (client.echo) {
-      yield { type: "note", text: "未配置 API Key：本回合由回声调试模式生成（可在 /api/config 配置模型）。" };
+      yield { type: "note", text: "文字模型未配置或选择了演示：本回合由本地演示引擎生成，可在网页设置中配置模型 API。" };
     }
 
     let finalData = null;
