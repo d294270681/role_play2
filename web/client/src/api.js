@@ -81,6 +81,11 @@ export const api = {
     return request("/api/config", { method: "POST", body: patch });
   },
   imageStatus() { return request("/api/image/status"); },
+  imageEnvironment(profile) { return request("/api/image/environment", { method: "POST", body: { profile } }); },
+  imageSetupStatus() { return request("/api/image/setup"); },
+  setupImage(profile) { return request("/api/image/setup", { method: "POST", body: { profile } }); },
+  cancelImageSetup() { return request("/api/image/setup/cancel", { method: "POST", body: {} }); },
+  disableImage() { return request("/api/image/disable", { method: "POST", body: {} }); },
   startImageRuntime() { return request("/api/image/runtime/start", { method: "POST", body: {} }); },
   stopImageRuntime() { return request("/api/image/runtime/stop", { method: "POST", body: {} }); },
   generateImage(module, slot, { kind, prompt, anime, name }) {

@@ -147,10 +147,10 @@ async function makePortrait() {
         <div class="ch-concept">{{ ch.concept || "（无设定）" }}</div>
         <div class="ch-goal" v-if="ch.goal">目标：{{ ch.goal }}</div>
         <div class="ch-weak" v-if="ch.weakness">弱点：{{ ch.weakness }}</div>
-        <button class="img-btn" :disabled="portraitBusy || !game.comfy?.online" @click="makePortrait">
+        <button class="img-btn" :disabled="portraitBusy || !game.comfy?.available" @click="makePortrait">
           {{ portraitBusy ? "生成中…" : game.portraitUrl ? "重新生成头像" : "生成头像" }}
         </button>
-        <div v-if="!game.comfy?.online" class="img-hint">ComfyUI 离线，无法出图</div>
+        <div v-if="!game.comfy?.available" class="img-hint">在设置中检测并配置本地生图后，可生成头像</div>
       </div>
     </section>
 

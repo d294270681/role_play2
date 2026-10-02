@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import api from "./api.js";
-import { applyEdit, canSend, clearStream, game, newGame, openSlot, reloadState, selectModule, sendAction, generateImage, abortTurn, loadImageStatus, controlImageRuntime } from "./store.js";
+import { applyEdit, canSend, clearStream, game, newGame, openSlot, reloadState, selectModule, sendAction, generateImage, abortTurn, loadImageStatus, controlImageRuntime, checkImageEnvironment, setupImage, loadImageSetup, disableImage } from "./store.js";
 
 function deferred() {
   let resolve;
@@ -20,6 +20,9 @@ function payload(module = "alpha", slot = 1) {
 
 test.beforeEach((t) => {
   clearStream();
+  game.comfy = { enabled: true, available: true, online: false, profiles: [] };
+  game.imageSetup = { status: "idle", active: false };
+  game.imageEnvironment = null;
   Object.assign(game, { module: "alpha", slot: 1, loaded: false, loading: false, busy: false, turnStreaming: false,
     moduleInfo: null, state: null, map: { locations: [], routes: [] }, characters: [], events: [],
     slots: [], suggestions: [], portraitUrl: "", locationImage: {}, lastError: "", toasts: [] });
@@ -225,4 +228,51 @@ test("存档快照中的旧出图状态不能覆盖独立运行时检测", async
   t.mock.method(api, "getState", async () => snapshot);
   await openSlot(1);
   assert.equal(game.comfy.ready, true);
+});
+
+test("图片未配置时前端不会发送生成请求", async (t) => {
+  game.comfy = { enabled: false, available: false, online: false };
+  t.mock.method(api, "generateImage", () => assert.fail("不能调用生成接口"));
+  assert.equal(await generateImage({ kind: "portrait" }), null);
+  assert.match(game.toasts.at(-1).text, /设置.*配置/);
+});
+
+test("硬件检测的旧响应不能覆盖新模型的报告", async (t) => {
+  const old = deferred();
+  t.mock.method(api, "imageEnvironment", (profile) => profile === "z-image-turbo" ? old.promise : Promise.resolve({ profile, eligible: false }));
+  const checking = checkImageEnvironment("z-image-turbo");
+  await checkImageEnvironment("qwen-image-2512");
+  old.resolve({ profile: "z-image-turbo", eligible: true }); await checking;
+  assert.equal(game.imageEnvironment.profile, "qwen-image-2512");
+  assert.equal(game.imageEnvironment.eligible, false);
+});
+
+test("安装任务独立于游戏槽位，完成后更新配置和按需生成按钮", async (t) => {
+  t.mock.method(api, "setupImage", async () => ({ id: "setup-1", profile: "z-image-turbo", status: "installing", active: true }));
+  await setupImage("z-image-turbo");
+  assert.equal(game.busy, false);
+  assert.equal(game.imageSetup.active, true);
+  assert.equal(game.comfy.available, false);
+  const ready = { id: "setup-1", profile: "z-image-turbo", status: "ready", active: false };
+  t.mock.method(api, "imageSetupStatus", async () => ready);
+  t.mock.method(api, "getConfig", async () => ({ image_generation: { enabled: true }, has_key: false, echo: true }));
+  t.mock.method(api, "imageStatus", async () => ({ enabled: true, available: true, online: false, profiles: [], setup: ready }));
+  await loadImageSetup();
+  assert.equal(game.config.image_generation.enabled, true);
+  assert.equal(game.comfy.available, true);
+  assert.equal(game.comfy.online, false);
+  assert.equal(game.imageSetup.active, false);
+});
+
+test("关闭图片生成后迟到的安装响应不能重新打开前端状态", async (t) => {
+  const late = deferred();
+  t.mock.method(api, "setupImage", () => late.promise);
+  const pending = setupImage("z-image-turbo");
+  t.mock.method(api, "disableImage", async () => ({ enabled: false, available: false, online: false, profiles: [],
+    config: { image_generation: { enabled: false } }, setup: { status: "cancelled", active: false } }));
+  await disableImage();
+  late.resolve({ status: "checking", active: true }); await pending;
+  assert.equal(game.comfy.enabled, false);
+  assert.equal(game.comfy.available, false);
+  assert.equal(game.imageSetup.status, "cancelled");
 });

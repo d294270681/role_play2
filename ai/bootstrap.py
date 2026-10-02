@@ -20,10 +20,11 @@ if "--check" in sys.argv:
             raise RuntimeError(f"依赖 {name} 来自项目外部：{filename}")
         locations[name] = str(filename.relative_to(AI_ROOT))
     import torch
+    import torchvision
     packages = sorted({f"{d.metadata['Name']}=={d.version}" for d in importlib.metadata.distributions() if d.metadata.get("Name")})
     print(json.dumps({
         "python": sys.version.split()[0], "prefix": sys.prefix,
-        "torch": torch.__version__, "cuda": torch.cuda.is_available(),
+        "torch": torch.__version__, "torchvision": torchvision.__version__, "cuda": torch.cuda.is_available(),
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU",
         "dependencies": locations, "packages": packages,
     }, ensure_ascii=False))

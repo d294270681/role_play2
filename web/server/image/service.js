@@ -105,7 +105,7 @@ export async function generateImage({ module, state = null, kind = "scene", prom
   const cfg = normalizeConfig(config || loadConfig());
   const built = assemblePrompt(kind, module, state, { prompt, anime, name });
   const base = await imageRuntime.ensureReady(cfg);
-  const prepared = buildProfileWorkflow({ profile: cfg.image_generation.profile, prompt: built.prompt, loraStrength: built.loraStrength, filenamePrefix: "rpg_" + kind, ...parameters });
+  const prepared = buildProfileWorkflow({ profile: cfg.image_generation.profile, prompt: built.prompt, filenamePrefix: "rpg_" + kind, ...parameters });
   await validateWorkflow(base, prepared.workflow);
   const result = await executeWorkflow(base, prepared.workflow, { timeoutMs: timeoutMs ?? prepared.profile.timeout_seconds * 1000 });
   const saved = saveAsset(result.buffer, module, kind);

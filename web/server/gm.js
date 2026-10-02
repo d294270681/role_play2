@@ -958,7 +958,10 @@ export async function* runTurn(module, state, action, config = null, history = n
     yield { type: "state", state: work, suggestions, changes };
 
     const imagePrompt = finalData?.image_prompt;
-    if (imagePrompt && opts.comfy !== false) {
+    // 回合可能运行很久；玩家期间关闭/切换生图后，不沿用回合开始时的配置。
+    const imageConfig = imagePrompt && opts.comfy !== false && cfg.image_generation?.enabled === true
+      ? configMod.loadConfig() : null;
+    if (imageConfig?.image_generation?.enabled === true) {
       yield { type: "note", text: "正在生成插图（本机 ComfyUI）…" };
       try {
         const image = await comfy.generateImage({
@@ -966,7 +969,7 @@ export async function* runTurn(module, state, action, config = null, history = n
           state: work,
           kind: "scene",
           prompt: imagePrompt,
-          config: cfg,
+          config: imageConfig,
           timeoutMs: opts.imageTimeoutMs,
         });
         yield { type: "image", url: image.url, prompt: image.prompt };

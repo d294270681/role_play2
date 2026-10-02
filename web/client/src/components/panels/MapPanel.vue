@@ -79,7 +79,7 @@ const locImage = computed(() => (loc.value ? game.locationImage?.[loc.value.name
           <span>{{ loc?.name || "当前地点" }} 尚无立绘</span>
           <button
             class="img-btn"
-            :disabled="imgBusy === (loc?.name || '') || !game.comfy?.online"
+            :disabled="imgBusy === (loc?.name || '') || !game.comfy?.available"
             @click="drawLocation(loc?.name || '')"
           >
             {{ imgBusy === (loc?.name || '') ? "生成中…" : "生成地点图" }}

@@ -7,6 +7,7 @@
 import { Router } from "express";
 
 import * as configMod from "../config.js";
+import { imageSetup } from "../image/setup.js";
 
 const router = Router();
 
@@ -14,9 +15,18 @@ router.get("/config", (req, res) => {
   res.json(configMod.maskedConfig(configMod.loadConfig()));
 });
 
-router.post("/config", (req, res, next) => {
+router.post("/config", async (req, res, next) => {
   try {
     const patch = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    const image = patch.image_generation;
+    if (image && typeof image === "object") {
+      const current = configMod.loadConfig().image_generation;
+      const changed = ["profile", "mode", "port", "device"].some((key) => key in image && image[key] !== current[key]);
+      if ("configured_at" in image || "device" in image || (image.enabled === true && (!current.enabled || changed)) || (current.enabled && changed)) {
+        throw Object.assign(new Error("请通过网页的「检测并配置」启用或切换生图模型，不能跳过环境与安装校验"), { status: 409 });
+      }
+      if (image.enabled === false) await imageSetup.disable();
+    }
     res.json(configMod.maskedConfig(configMod.updateConfig(patch)));
   } catch (e) {
     next(e);

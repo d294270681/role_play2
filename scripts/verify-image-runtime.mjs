@@ -6,7 +6,8 @@ import { loadConfig, normalizeConfig } from "../web/server/config.js";
 import { imageRuntime, generateImage } from "../web/server/comfy.js";
 
 const option = (name, fallback) => { const i = process.argv.indexOf(name); return i >= 0 ? Number(process.argv[i + 1]) : fallback; };
-const cfg = normalizeConfig({ ...loadConfig(), image_generation: { mode: "internal", auto_start: true, profile: "z-image-turbo", port: option("--port", 8188) } });
+// 此 CLI 的显式执行是验证授权；仅覆盖内存配置，不替用户开启网页功能。
+const cfg = normalizeConfig({ ...loadConfig(), image_generation: { enabled: true, configured_at: new Date().toISOString(), mode: "internal", profile: "z-image-turbo", port: option("--port", 8188) } });
 const size = option("--size", 512);
 const started = Date.now();
 try {

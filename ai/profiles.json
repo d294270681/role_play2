@@ -1,30 +1,33 @@
 {
-  "version": 1,
+  "version": 2,
   "default": "z-image-turbo",
   "profiles": [
     {
       "id": "z-image-turbo",
       "title": "Z-Image-Turbo · Qwen3",
-      "description": "现有本机配方；Qwen3 负责文本编码，Z-Image-Turbo 负责生成图像。",
+      "description": "速度优先，适合剧情插图；Qwen3 文本编码器配合 Z-Image-Turbo 图像模型。",
+      "requirements": { "vram_gib": 16, "ram_gib": 32, "cpu_threads": 4, "compute_capability": 8, "driver_windows": "570.65" },
       "workflow": "z-image-turbo.json",
       "models": {
-        "unet": { "directory": "diffusion_models", "file": "z_image_turbo_bf16.safetensors" },
-        "clip": { "directory": "text_encoders", "file": "qwen_3_4b.safetensors" },
-        "vae": { "directory": "vae", "file": "ae.safetensors" },
-        "lora": { "directory": "loras", "file": "NSFW_master_ZIT.safetensors" }
+        "unet": { "directory": "diffusion_models", "file": "z_image_turbo_bf16.safetensors", "bytes": 12309866400, "sha256": "2407613050b809ffdff18a4ac99af83ea6b95443ecebdf80e064a79c825574a6", "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors" },
+        "clip": { "directory": "text_encoders", "file": "qwen_3_4b.safetensors", "bytes": 8044982048, "sha256": "6c671498573ac2f7a5501502ccce8d2b08ea6ca2f661c458e708f36b36edfc5a", "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors" },
+        "vae": { "directory": "vae", "file": "ae.safetensors", "bytes": 335304388, "sha256": "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38", "url": "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/vae/ae.safetensors" },
+        "lora": { "directory": "loras", "file": "NSFW_master_ZIT.safetensors", "optional": true }
       },
-      "parameters": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1, "shift": 3, "loraStrength": 0.8 },
-      "timeout_seconds": 900
+      "parameters": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1, "shift": 3, "loraStrength": 0 },
+      "timeout_seconds": 900,
+      "source": "https://docs.comfy.org/tutorials/image/z-image/z-image-turbo"
     },
     {
       "id": "qwen-image-2512",
       "title": "Qwen-Image 2512",
-      "description": "完整 Qwen-Image 图像模型；当前源目录没有对应权重，补齐三个组件后可启用。",
+      "description": "画面细节与文字表现优先；完整 Qwen-Image 2512 的 FP8 版本，生成耗时更长。",
+      "requirements": { "vram_gib": 24, "ram_gib": 48, "cpu_threads": 8, "compute_capability": 8, "driver_windows": "570.65" },
       "workflow": "qwen-image-2512.json",
       "models": {
-        "unet": { "directory": "diffusion_models", "file": "qwen_image_2512_fp8_e4m3fn.safetensors" },
-        "clip": { "directory": "text_encoders", "file": "qwen_2.5_vl_7b_fp8_scaled.safetensors" },
-        "vae": { "directory": "vae", "file": "qwen_image_vae.safetensors" }
+        "unet": { "directory": "diffusion_models", "file": "qwen_image_2512_fp8_e4m3fn.safetensors", "bytes": 20430679144, "sha256": "5dc80554d5d83390046a2f4a94ece06afb7700bf7b0aaf8bde9769793875876b", "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors" },
+        "clip": { "directory": "text_encoders", "file": "qwen_2.5_vl_7b_fp8_scaled.safetensors", "bytes": 9384670680, "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4", "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors" },
+        "vae": { "directory": "vae", "file": "qwen_image_vae.safetensors", "bytes": 253806246, "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f", "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors" }
       },
       "parameters": { "width": 1328, "height": 1328, "steps": 50, "cfg": 4, "shift": 3.1 },
       "timeout_seconds": 1800,

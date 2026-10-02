@@ -34,7 +34,9 @@ export const game = reactive({
   events: [],
   hasKey: false,
   echo: true,
-  comfy: { online: false, url: "" },
+  comfy: { enabled: false, available: false, online: false, state: "disabled", url: "" },
+  imageSetup: { status: "idle", active: false },
+  imageEnvironment: null,
   // 界面
   stream: [],
   suggestions: [],
@@ -608,6 +610,7 @@ let _imgBusy = false;
 /** kind: scene | location | portrait；成功后回传 URL（失败返回 null）。 */
 export async function generateImage({ kind = "scene", prompt = "", name = "", anime = false } = {}) {
   if (!game.module || _imgBusy) return null;
+  if (!game.comfy?.available) { notify("请先在设置中检测并配置图片生成", "info"); return null; }
   const context = session();
   _imgBusy = true;
   try {
@@ -634,7 +637,8 @@ export async function loadConfig() {
     game.config = await api.getConfig();
     game.hasKey = Boolean(game.config?.has_key);
     game.echo = Boolean(game.config?.echo);
-    game.comfy = { online: game.comfy?.online ?? false, url: game.config?.comfy_url || game.comfy?.url || "" };
+    const enabled = game.config?.image_generation?.enabled === true;
+    game.comfy = { ...game.comfy, enabled, available: enabled && game.comfy?.available === true, online: enabled && game.comfy?.online === true, url: game.config?.comfy_url || "" };
     void watchImageStartup();
     return game.config;
   } catch (e) {
@@ -649,11 +653,96 @@ let _imageWatch = null;
 /** 出图服务检测与存档独立，没有开档时也能管理运行时。 */
 export async function loadImageStatus({ silent = false } = {}) {
   const request = ++_imageStatusRequest;
+  const setupRequest = _imageSetupRequest;
   try {
     const status = await api.imageStatus();
-    if (request === _imageStatusRequest) game.comfy = status;
+    if (request === _imageStatusRequest) {
+      game.comfy = status;
+      if (status.setup && setupRequest === _imageSetupRequest) acceptImageSetup(status.setup);
+    }
     return game.comfy;
   } catch (e) { if (!silent && request === _imageStatusRequest) reportError(e); return null; }
+}
+
+let _imageSetupRequest = 0;
+let _imageEnvironmentRequest = 0;
+let _imageSetupTimer = null;
+let _imageSetupNotified = null;
+
+function scheduleImageSetup() {
+  if (_imageSetupTimer !== null) clearTimeout(_imageSetupTimer);
+  _imageSetupTimer = null;
+  if (game.imageSetup?.active) _imageSetupTimer = setTimeout(() => { _imageSetupTimer = null; void loadImageSetup({ silent: true }); }, 1500);
+}
+
+function acceptImageSetup(job) {
+  const wasActive = game.imageSetup?.active;
+  game.imageSetup = job;
+  if (job.environment) game.imageEnvironment = job.environment;
+  scheduleImageSetup();
+  if (wasActive && !job.active && job.id && job.id !== _imageSetupNotified) {
+    _imageSetupNotified = job.id;
+    if (job.status === "ready") notify("本地生图配置完成，生成图片时自动加载", "success");
+    if (job.status === "failed") notify(job.error || "图片配置失败，可在设置中重试", "error", 7000);
+  }
+}
+
+export async function loadImageSetup({ silent = false } = {}) {
+  const request = ++_imageSetupRequest;
+  const wasActive = game.imageSetup?.active;
+  try {
+    const job = await api.imageSetupStatus();
+    if (request !== _imageSetupRequest) return game.imageSetup;
+    acceptImageSetup(job);
+    if (wasActive && !job.active) { await loadConfig(); await loadImageStatus({ silent: true }); }
+    return game.imageSetup;
+  } catch (e) { if (!silent) reportError(e); if (request === _imageSetupRequest) scheduleImageSetup(); return null; }
+}
+
+export async function checkImageEnvironment(profile) {
+  const request = ++_imageEnvironmentRequest;
+  try {
+    const report = await api.imageEnvironment(profile);
+    if (request === _imageEnvironmentRequest) game.imageEnvironment = report;
+    return report;
+  } catch (e) { if (request === _imageEnvironmentRequest) reportError(e); return null; }
+}
+
+export async function setupImage(profile) {
+  const request = ++_imageSetupRequest;
+  try {
+    const job = await api.setupImage(profile);
+    if (request !== _imageSetupRequest) return null;
+    acceptImageSetup(job);
+    _imageStatusRequest += 1;
+    game.comfy = { ...game.comfy, available: false };
+    return job;
+  } catch (e) { reportError(e); return null; }
+}
+
+export async function cancelImageSetup() {
+  const request = ++_imageSetupRequest;
+  try {
+    const job = await api.cancelImageSetup();
+    if (request === _imageSetupRequest) acceptImageSetup(job);
+    await loadConfig(); await loadImageStatus({ silent: true });
+    return job;
+  } catch (e) { reportError(e); return null; }
+}
+
+export async function disableImage() {
+  const request = ++_imageSetupRequest;
+  _imageStatusRequest += 1;
+  try {
+    const result = await api.disableImage();
+    if (request !== _imageSetupRequest) return null;
+    _imageStatusRequest += 1;
+    game.comfy = result;
+    game.config = result.config;
+    acceptImageSetup(result.setup);
+    notify("图片生成已关闭，下载的文件保留以供下次复用", "info");
+    return result;
+  } catch (e) { reportError(e); return null; }
 }
 
 /** 冷启动完成后自动更新出图按钮，不要求玩家手动回读存档。 */

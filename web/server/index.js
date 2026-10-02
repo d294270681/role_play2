@@ -22,6 +22,7 @@ import express from "express";
 
 import * as configMod from "./config.js";
 import * as comfy from "./comfy.js";
+import { imageSetup } from "./image/setup.js";
 import apiRouter from "./routes/index.js";
 import { ApiError } from "./routes/shared.js";
 
@@ -134,10 +135,7 @@ export function main(argv = process.argv.slice(2)) {
     console.log(`[RPG] 配置：${configMod.CONFIG_PATH}（认证模式：${configMod.maskedConfig(cfg).auth_mode}）`);
     console.log(`[RPG] 前端：${fs.existsSync(CLIENT_DIST) ? CLIENT_DIST : "web/client/dist 尚未部署（/ 显示占位页）"}`);
     console.log(`[RPG] 静态资源：${comfy.ASSETS_ROOT} → /assets`);
-    if (cfg.image_generation.auto_start) {
-      comfy.imageRuntime.ensureReady(cfg).then((url) => console.log(`[RPG] 出图服务已就绪：${url}（${cfg.image_generation.profile}）`))
-        .catch((e) => console.error(`[RPG] 出图服务启动失败：${e.message}`));
-    }
+    console.log(`[RPG] 图片生成：${cfg.image_generation.enabled ? "已配置，生成图片时按需启动" : "未配置（网页设置中可启用）"}`);
   });
   let closing = false;
   const shutdown = async () => {
@@ -145,11 +143,11 @@ export function main(argv = process.argv.slice(2)) {
     closing = true;
     server.closeAllConnections();
     server.close();
-    try { await comfy.imageRuntime.stop(); } finally { process.exit(0); }
+    try { await imageSetup.cancel(); await comfy.imageRuntime.stop(); } finally { process.exit(0); }
   };
   process.once("SIGINT", shutdown);
   process.once("SIGTERM", shutdown);
-  server.once("close", () => { void comfy.imageRuntime.stop(); });
+  server.once("close", () => { void imageSetup.cancel(); void comfy.imageRuntime.stop(); });
   return server;
 }
 

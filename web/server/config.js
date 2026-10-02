@@ -48,7 +48,7 @@ export const DEFAULT_CONFIG = {
   timeout: 180,
 };
 
-/** 新安装默认由项目管理出图服务；认证字段与旧配置兼容。 */
+/** 图片功能默认关闭；网页检测配置成功后才显式启用。 */
 export function templateConfig() {
   return {
     base_url: DEFAULT_CONFIG.base_url,

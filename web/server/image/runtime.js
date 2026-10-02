@@ -22,6 +22,7 @@ export class ImageRuntime {
     this.stopping = false;
     this.stoppingTask = null;
     this.startedAt = null;
+    this.lifecycle = 0;
   }
 
   installed() {
@@ -56,46 +57,54 @@ export class ImageRuntime {
     const profiles = listProfiles(this.paths.root);
     const selected = profiles.find((p) => p.id === settings.profile);
     const url = this.url(config);
-    const stats = await this.probe(url);
+    // 未配置时连端口探测也不执行，更不导入 torch 或启动 Python。
+    const stats = settings.enabled ? await this.probe(url) : null;
     const ours = this.belongsToProject(stats);
     const online = Boolean(stats && (settings.mode === "external" || ours));
     const installed = this.installed();
     return {
+      enabled: settings.enabled, configured_at: settings.configured_at,
       mode: settings.mode, url, online, installed,
+      available: settings.enabled && (settings.mode === "external" ? online : installed && Boolean(selected?.available)),
       ready: online && (settings.mode === "external" || (installed && selected?.available)),
-      state: online ? "running" : this.starting ? "starting" : this.error ? "error" : "stopped",
+      state: !settings.enabled ? "disabled" : online ? "running" : this.starting ? "starting" : this.error ? "error" : "stopped",
       managed: Boolean(this.child), pid: this.child?.pid ?? null,
-      profile: settings.profile, profiles, auto_start: settings.auto_start,
-      error: this.error || (stats && settings.mode === "internal" && !ours ? `端口 ${settings.port} 上运行的是另一个 ComfyUI` : ""),
+      profile: settings.profile, profiles,
+      error: settings.enabled ? this.error || (stats && settings.mode === "internal" && !ours ? `端口 ${settings.port} 上运行的是另一个 ComfyUI` : "") : "",
       log: "ai/data/logs/comfyui.log", started_at: this.startedAt,
     };
   }
 
-  async ensureReady(config, { force = false } = {}) {
+  async ensureReady(config) {
+    const lifecycle = this.lifecycle;
     const settings = imageSettings(config.image_generation);
+    if (!settings.enabled) throw new ImageRuntimeError("图片生成尚未配置，请在网页设置中选择模型并检测配置");
     const url = this.url(config);
     if (settings.mode === "external") {
-      if (!(await this.probe(url))) throw new ImageRuntimeError(`外部 ComfyUI 不可达：${url}`);
+      const online = await this.probe(url);
+      if (lifecycle !== this.lifecycle) throw new ImageRuntimeError("本次出图启动已取消");
+      if (!online) throw new ImageRuntimeError(`外部 ComfyUI 不可达：${url}`);
       return url;
     }
-    if (!this.installed()) throw new ImageRuntimeError("项目内出图环境未完整导入，请执行 scripts/import-image-runtime.mjs --source <现有 AI 目录>");
+    if (!this.installed()) throw new ImageRuntimeError("项目内出图环境未安装完整，请在网页设置中重新检测配置");
     const profile = listProfiles(this.paths.root).find((p) => p.id === settings.profile);
     if (!profile?.available) throw new ImageRuntimeError(`模型组件未齐全：${profile?.models.filter((m) => !m.installed).map((m) => m.file).join("、") || settings.profile}`);
     if (this.child && this.port !== settings.port) throw new ImageRuntimeError(`项目内服务正在使用 ${this.port} 端口，请先停止后再修改端口`);
     if (this.starting) return this.starting;
     const existing = await this.probe(url);
+    if (lifecycle !== this.lifecycle) throw new ImageRuntimeError("本次出图启动已取消");
     if (existing) {
       if (!this.belongsToProject(existing)) throw new ImageRuntimeError(`端口 ${settings.port} 已被其他 ComfyUI 使用，请更换内部端口或选择外部连接模式`);
       return url;
     }
-    if (!force && !settings.auto_start) throw new ImageRuntimeError("项目内出图服务尚未启动，请在设置中点击启动");
     // 探测之后再抢单次启动任务，避免两个并发请求同时创建进程。
     if (this.starting) return this.starting;
-    this.starting = this.start(settings, url).finally(() => { this.starting = null; });
+    this.starting = this.start(settings, url, lifecycle).finally(() => { this.starting = null; });
     return this.starting;
   }
 
-  async start(settings, url) {
+  async start(settings, url, lifecycle = this.lifecycle) {
+    if (lifecycle !== this.lifecycle) throw new ImageRuntimeError("本次出图启动已取消");
     this.error = "";
     this.stopping = false;
     this.port = settings.port;
@@ -108,7 +117,7 @@ export class ImageRuntime {
     const pythonRoot = path.dirname(this.paths.python);
     const child = this.spawnProcess(this.paths.python, args, {
       cwd: this.paths.comfy, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, PYTHONHOME: pythonRoot, PYTHONPATH: "", PYTHONNOUSERSITE: "1", PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", TEMP: path.join(this.paths.data, "temp"), TMP: path.join(this.paths.data, "temp"), TORCH_HOME: path.join(this.paths.data, "cache", "torch"), TORCHINDUCTOR_CACHE_DIR: path.join(this.paths.data, "cache", "inductor"), TRITON_CACHE_DIR: path.join(this.paths.data, "cache", "triton"), HF_HOME: path.join(this.paths.data, "cache", "huggingface"), HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" },
+      env: { ...process.env, CUDA_VISIBLE_DEVICES: String(settings.device), PYTHONHOME: pythonRoot, PYTHONPATH: "", PYTHONNOUSERSITE: "1", PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", TEMP: path.join(this.paths.data, "temp"), TMP: path.join(this.paths.data, "temp"), TORCH_HOME: path.join(this.paths.data, "cache", "torch"), TORCHINDUCTOR_CACHE_DIR: path.join(this.paths.data, "cache", "inductor"), TRITON_CACHE_DIR: path.join(this.paths.data, "cache", "triton"), HF_HOME: path.join(this.paths.data, "cache", "huggingface"), HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1" },
     });
     this.child = child;
     this.startedAt = new Date().toISOString();
@@ -144,6 +153,7 @@ export class ImageRuntime {
   }
 
   async stop() {
+    this.lifecycle += 1;
     if (this.stoppingTask) return this.stoppingTask;
     this.stopping = true;
     const child = this.child;

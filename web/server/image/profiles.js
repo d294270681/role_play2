@@ -14,6 +14,7 @@ export function runtimePaths(root = AI_ROOT) {
     bootstrap: path.join(root, "bootstrap.py"), comfy: path.join(root, "vendor", "ComfyUI"),
     models: path.join(root, "models"), data: path.join(root, "data"),
     install: path.join(root, "runtime", "install.json"),
+    setup: path.join(root, "data", "setup.json"),
     log: path.join(root, "data", "logs", "comfyui.log"),
   };
 }
@@ -31,9 +32,12 @@ export function imageSettings(value = {}) {
     return Number.isInteger(n) && n >= min && n <= max ? n : fallback;
   };
   return {
+    // 旧版 auto_start 不能代替网页配置的明确选择。
+    enabled: value.enabled === true && typeof value.configured_at === "string" && Number.isFinite(Date.parse(value.configured_at)),
+    configured_at: typeof value.configured_at === "string" && Number.isFinite(Date.parse(value.configured_at)) ? value.configured_at : null,
     mode: value.mode === "external" ? "external" : "internal",
-    auto_start: value.auto_start !== false,
     profile: profiles.has(value.profile) ? value.profile : DEFAULT_PROFILE,
+    device: integer(value.device, 0, 0, 31),
     port: integer(value.port, 8188, 1024, 65535),
     startup_timeout: integer(value.startup_timeout, 120, 10, 600),
   };
@@ -41,13 +45,13 @@ export function imageSettings(value = {}) {
 
 export function listProfiles(root = AI_ROOT) {
   return [...profiles.values()].map((profile) => {
-    const models = Object.values(profile.models).map(({ directory, file }) => {
+    const models = Object.values(profile.models).map(({ directory, file, optional = false, bytes: expected_bytes }) => {
       const location = path.join(root, "models", directory, file);
       let bytes = 0;
       try { bytes = fs.statSync(location).size; } catch { /* 尚未导入 */ }
-      return { directory, file, installed: bytes > 0, bytes };
+      return { directory, file, optional, installed: bytes > 0 && (expected_bytes == null || bytes === expected_bytes), bytes, expected_bytes };
     });
-    return { id: profile.id, title: profile.title, description: profile.description, available: models.every((m) => m.installed), models };
+    return { id: profile.id, title: profile.title, description: profile.description, requirements: profile.requirements, available: models.filter((m) => !m.optional).every((m) => m.installed), models };
   });
 }
 
@@ -70,5 +74,11 @@ export function buildProfileWorkflow({ profile = DEFAULT_PROFILE, prompt = "", n
     if (!(match[1] in values)) throw new Error(`工作流缺少参数：${match[1]}`);
     return values[match[1]];
   };
-  return { workflow: fill(template), profile: definition, parameters: values };
+  const workflow = fill(template);
+  // 已导入的 LoRA 可选；官方基础配方无需下载它。
+  if (workflow["4"]?.class_type === "LoraLoaderModelOnly" && !(values.loraStrength > 0)) {
+    workflow["10"].inputs.model = ["1", 0];
+    delete workflow["4"];
+  }
+  return { workflow, profile: definition, parameters: values };
 }

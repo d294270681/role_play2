@@ -11,6 +11,8 @@ import { normalizeConfig, updateConfig, maskedConfig, CONFIG_PATH } from "../con
 import { shouldCopyComfy } from "../../../scripts/image-import-plan.mjs";
 import { createApp } from "../index.js";
 
+const configured = (settings = {}) => normalizeConfig({ image_generation: { enabled: true, configured_at: "2026-10-03T00:00:00Z", ...settings } });
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "rpg-image-test-"));
   const paths = runtimePaths(root);
@@ -18,6 +20,14 @@ function fixture(t) {
   for (const file of [paths.python, paths.bootstrap, path.join(paths.comfy, "main.py")]) write(file);
   write(paths.install, JSON.stringify({ completed: true }));
   for (const spec of Object.values(getProfile().models)) write(path.join(paths.models, spec.directory, spec.file));
+  // 生命周期测试模拟正确的大文件元数据，避免在测试中写入数十 GiB。
+  const sizes = new Map(Object.values(getProfile().models).filter((m) => m.bytes).map((m) => [path.join(paths.models, m.directory, m.file), m.bytes]));
+  const stat = fs.statSync.bind(fs);
+  t.mock.method(fs, "statSync", (file, ...args) => {
+    const info = stat(file, ...args);
+    if (sizes.has(String(file))) info.size = sizes.get(String(file));
+    return info;
+  });
   t.after(() => {
     if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith("rpg-image-test-")) throw new Error("测试清理路径越界");
     fs.rmSync(root, { recursive: true, force: true });
@@ -41,10 +51,12 @@ test("源码迁入只排除顶层权重目录，保留 comfy/ldm/models 的实�
   assert.equal(shouldCopyComfy(root, path.join(root, "..", "other.py")), false);
 });
 
-test("两个模型档案各自使用匹配的编码器、VAE、采样器和 LoRA", () => {
+test("模型档案使用各自编码器、VAE、采样器，基础配方不依赖可选 LoRA", () => {
   const zit = buildProfileWorkflow({ prompt: "港口", seed: 42 });
   assert.equal(zit.workflow["2"].inputs.type, "lumina2");
-  assert.equal(zit.workflow["4"].class_type, "LoraLoaderModelOnly");
+  assert.equal(zit.workflow["4"], undefined);
+  assert.deepEqual(zit.workflow["10"].inputs.model, ["1", 0]);
+  assert.equal(buildProfileWorkflow({ loraStrength: 0.8 }).workflow["4"].class_type, "LoraLoaderModelOnly");
   assert.equal(zit.workflow["7"].inputs.steps, 8);
   assert.equal(zit.workflow["7"].inputs.seed, 42);
   const qwen = buildProfileWorkflow({ profile: "qwen-image-2512", prompt: "港口", seed: 42 });
@@ -65,12 +77,32 @@ test("模型组件不全时不会显示为可用档案", (t) => {
   const qwen = all.find((p) => p.id === "qwen-image-2512");
   assert.equal(qwen.available, false);
   assert.equal(qwen.models.every((model) => !model.installed), true);
+  const optional = getProfile().models.lora;
+  fs.unlinkSync(path.join(root, "models", optional.directory, optional.file));
+  assert.equal(listProfiles(root).find((p) => p.id === "z-image-turbo").available, true);
 });
 
-test("配置使用项目内服务为默认，外部模式保留地址，部分更新保留其他设置", (t) => {
+test("同名但大小不正确的模型文件不能显示为已安装", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "rpg-image-test-"));
+  const file = path.join(root, "models", "diffusion_models", "z_image_turbo_bf16.safetensors");
+  fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, "partial");
+  t.after(() => {
+    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) || !path.basename(root).startsWith("rpg-image-test-")) throw new Error("测试路径越界");
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const profile = listProfiles(root).find((p) => p.id === "z-image-turbo");
+  assert.equal(profile.available, false);
+  assert.equal(profile.models.find((m) => m.file === path.basename(file)).installed, false);
+});
+
+test("图片默认关闭，旧 auto_start 不算网页授权，部分配置更新保持兼容", (t) => {
   const { root } = fixture(t);
   assert.deepEqual(imageSettings({ port: -1, startup_timeout: 0, profile: "unknown" }), imageSettings());
   assert.deepEqual(imageSettings(null), imageSettings());
+  assert.equal(imageSettings().enabled, false);
+  assert.equal(imageSettings({ auto_start: true }).enabled, false);
+  assert.equal(imageSettings({ enabled: true }).enabled, false);
+  assert.equal(configured().image_generation.enabled, true);
   assert.equal(normalizeConfig({ comfy_url: "http://host:9" }).comfy_url, "http://127.0.0.1:8188");
   const configPath = path.join(root, "config.json");
   fs.writeFileSync(configPath, JSON.stringify({ api_key: "test-config-value", kimi_oauth: { enabled: false }, comfy_url: "http://host:9", image_generation: { mode: "external", port: 9000, profile: "qwen-image-2512" } }));
@@ -98,7 +130,7 @@ test("并发出图请求只启动一次项目进程，启动参数和缓存均�
       return child;
     },
   });
-  const cfg = normalizeConfig({});
+  const cfg = configured({ device: 1 });
   const result = await Promise.all([runtime.ensureReady(cfg), runtime.ensureReady(cfg)]);
   assert.equal(spawns, 1);
   assert.deepEqual(result, [cfg.comfy_url, cfg.comfy_url]);
@@ -113,9 +145,9 @@ test("内部端口被其他 ComfyUI 占用时拒绝接管，不创建或终止�
   const runtime = new ImageRuntime({ paths, spawnProcess: () => assert.fail("不应启动"),
     fetcher: async () => ({ ok: true, json: async () => ({ system: { argv: ["other-main.py"] } }) }),
   });
-  await assert.rejects(runtime.ensureReady(normalizeConfig({})), /其他 ComfyUI/);
+  await assert.rejects(runtime.ensureReady(configured()), /其他 ComfyUI/);
   assert.equal(await runtime.stop(), false);
-  assert.equal((await runtime.status(normalizeConfig({}))).online, false);
+  assert.equal((await runtime.status(configured())).online, false);
 });
 
 test("外部模式只连接服务，项目未安装也不会自动创建内部进程", async (t) => {
@@ -124,17 +156,39 @@ test("外部模式只连接服务，项目未安装也不会自动创建内部�
   const runtime = new ImageRuntime({ paths, spawnProcess: () => assert.fail("不应启动内部进程"),
     fetcher: async () => ({ ok: true, json: async () => ({ system: {} }) }),
   });
-  const cfg = normalizeConfig({ comfy_url: "http://external:8188", image_generation: { mode: "external" } });
+  const cfg = { ...configured({ mode: "external" }), comfy_url: "http://external:8188" };
   assert.equal(await runtime.ensureReady(cfg), "http://external:8188");
   assert.equal((await runtime.status(cfg)).managed, false);
   assert.equal(await runtime.stop(), false);
 });
 
-test("关闭自动启动或缺少模型时返回明确错误，不伪造就绪状态", async (t) => {
+test("未配置时已有运行环境也不探测/启动，强制启动不能跳过开关", async (t) => {
+  const { paths } = fixture(t);
+  const runtime = new ImageRuntime({ paths, spawnProcess: () => assert.fail("不应启动"), fetcher: () => assert.fail("未配置不应探测端口") });
+  const status = await runtime.status(normalizeConfig({ image_generation: { auto_start: true } }));
+  assert.equal(status.installed, true);
+  assert.equal(status.enabled, false);
+  assert.equal(status.available, false);
+  assert.equal(status.online, false);
+  assert.equal(status.state, "disabled");
+  await assert.rejects(runtime.ensureReady(normalizeConfig({}), { force: true }), /尚未配置/);
+});
+
+test("已配置但缺少模型时返回明确错误，不伪造就绪状态", async (t) => {
   const { paths } = fixture(t);
   const runtime = new ImageRuntime({ paths, spawnProcess: () => assert.fail("不应启动"), fetcher: async () => ({ ok: false }) });
-  await assert.rejects(runtime.ensureReady(normalizeConfig({ image_generation: { auto_start: false } })), /尚未启动/);
-  await assert.rejects(runtime.ensureReady(normalizeConfig({ image_generation: { profile: "qwen-image-2512" } })), /模型组件未齐全/);
+  await assert.rejects(runtime.ensureReady(configured({ profile: "qwen-image-2512" })), /模型组件未齐全/);
+});
+
+test("关闭时仍在探测的旧生成请求不能晚到后启动进程", async (t) => {
+  const { paths } = fixture(t);
+  let resolve;
+  const pending = new Promise((r) => { resolve = r; });
+  const runtime = new ImageRuntime({ paths, spawnProcess: () => assert.fail("关闭后不应启动"), fetcher: () => pending });
+  const starting = runtime.ensureReady(configured());
+  const rejected = assert.rejects(starting, /启动已取消/);
+  await runtime.stop(); resolve({ ok: false }); await rejected;
+  assert.equal(runtime.child, null);
 });
 
 test("提交前校验节点与枚举，发现缺失组件便停止", async () => {
