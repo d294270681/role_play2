@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 
-import { game, loadConfig, reloadState, saveConfig } from "../store.js";
+import { controlImageRuntime, game, loadConfig, loadImageStatus, saveConfig } from "../store.js";
 
 const props = defineProps({ show: { type: Boolean, default: false } });
 const emit = defineEmits(["update:show"]);
@@ -14,6 +14,9 @@ const form = ref({
   stream: true,
   timeout: 180,
   comfy_url: "",
+  image_mode: "internal",
+  image_profile: "z-image-turbo",
+  image_auto_start: true,
 });
 const saving = ref(false);
 const busyProbe = ref(false);
@@ -32,7 +35,11 @@ watch(
       stream: cfg.stream !== false,
       timeout: Number(cfg.timeout ?? 180),
       comfy_url: cfg.comfy_url || "",
+      image_mode: cfg.image_generation?.mode || "internal",
+      image_profile: cfg.image_generation?.profile || "z-image-turbo",
+      image_auto_start: cfg.image_generation?.auto_start !== false,
     };
+    await loadImageStatus();
   },
 );
 
@@ -51,6 +58,7 @@ async function submit() {
     stream: Boolean(form.value.stream),
     timeout: Number(form.value.timeout),
     comfy_url: form.value.comfy_url.trim(),
+    image_generation: { mode: form.value.image_mode, profile: form.value.image_profile, auto_start: form.value.image_auto_start },
   };
   if (form.value.api_key.trim()) patch.api_key = form.value.api_key.trim();
   await saveConfig(patch);
@@ -58,10 +66,20 @@ async function submit() {
   saving.value = false;
 }
 
-/** 后端只有 /api/game/state 会回 comfy.online，用回读存档来重新探测。 */
+const imageOptions = computed(() => (game.comfy?.profiles || []).map((p) => ({
+  label: p.title + (p.available || form.value.image_mode === "external" ? "" : "（模型待导入）"),
+  value: p.id, disabled: form.value.image_mode === "internal" && !p.available,
+})));
+
 async function probe() {
   busyProbe.value = true;
-  await reloadState();
+  await loadImageStatus();
+  busyProbe.value = false;
+}
+
+async function runtime(action) {
+  busyProbe.value = true;
+  await controlImageRuntime(action);
   busyProbe.value = false;
 }
 </script>
@@ -118,18 +136,33 @@ async function probe() {
       </section>
 
       <section>
-        <h4 class="section-label">ComfyUI 生图</h4>
-        <label class="lbl">comfy_url</label>
-        <n-input v-model:value="form.comfy_url" placeholder="http://127.0.0.1:8188" />
+        <h4 class="section-label">生图服务</h4>
+        <label class="lbl">运行方式</label>
+        <n-select v-model:value="form.image_mode" :options="[{ label: '项目内 ComfyUI', value: 'internal' }, { label: '连接外部 ComfyUI', value: 'external' }]" />
+        <label class="lbl">出图模型</label>
+        <n-select v-model:value="form.image_profile" :options="imageOptions" />
+        <template v-if="form.image_mode === 'external'">
+          <label class="lbl">ComfyUI 地址</label>
+          <n-input v-model:value="form.comfy_url" placeholder="http://127.0.0.1:8188" />
+        </template>
+        <label v-else class="row">
+          <n-switch v-model:value="form.image_auto_start" />
+          <span>随游戏自动启动出图服务</span>
+        </label>
         <div class="status-row">
-          <n-tag :type="game.comfy?.online ? 'success' : 'error'" size="small" round>
-            {{ game.comfy?.online ? "在线" : "离线" }}
+          <n-tag :type="game.comfy?.ready ? 'success' : 'warning'" size="small" round>
+            {{ game.comfy?.ready ? "可出图" : game.comfy?.state === "starting" ? "启动中" : game.comfy?.online ? "模型未就绪" : "未启动" }}
           </n-tag>
           <span class="dim">{{ game.comfy?.url || "—" }}</span>
           <n-button size="tiny" quaternary :loading="busyProbe" @click="probe">重新检测</n-button>
         </div>
+        <div v-if="game.comfy?.mode === 'internal'" class="status-row">
+          <n-button size="small" :loading="busyProbe" :disabled="game.comfy?.online || game.busy" @click="runtime('start')">启动出图服务</n-button>
+          <n-button size="small" :disabled="!game.comfy?.managed || busyProbe || game.busy" @click="runtime('stop')">停止出图服务</n-button>
+        </div>
+        <p v-if="game.comfy?.error" class="hint">{{ game.comfy.error }}</p>
         <p class="hint">
-          剧情插图、地点立绘与角色头像都由本机 ComfyUI 出图；离线时回合会照常跑完，只是跳过插图。
+          剧情插图、地点立绘与角色头像使用同一出图服务。项目内模式会管理程序、模型和日志；模型按需载入。修改运行方式或模型后先保存配置。
         </p>
       </section>
 

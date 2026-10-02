@@ -80,6 +80,9 @@ export const api = {
   saveConfig(patch) {
     return request("/api/config", { method: "POST", body: patch });
   },
+  imageStatus() { return request("/api/image/status"); },
+  startImageRuntime() { return request("/api/image/runtime/start", { method: "POST", body: {} }); },
+  stopImageRuntime() { return request("/api/image/runtime/stop", { method: "POST", body: {} }); },
   generateImage(module, slot, { kind, prompt, anime, name }) {
     return request("/api/image/generate", { method: "POST", body: { module, slot, kind, prompt, anime, name } });
   },

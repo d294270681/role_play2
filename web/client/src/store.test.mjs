@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import api from "./api.js";
-import { applyEdit, canSend, clearStream, game, newGame, openSlot, reloadState, selectModule, sendAction, generateImage, abortTurn } from "./store.js";
+import { applyEdit, canSend, clearStream, game, newGame, openSlot, reloadState, selectModule, sendAction, generateImage, abortTurn, loadImageStatus, controlImageRuntime } from "./store.js";
 
 function deferred() {
   let resolve;
@@ -195,4 +195,34 @@ test("SSE 消费方提前结束迭代时取消响应流并释放读取锁", asyn
   }
   assert.equal(canceled, 1);
   assert.equal(body.locked, false);
+});
+
+test("出图状态的迟到检测不能覆盖新检测或停止操作的结果", async (t) => {
+  const first = deferred(), second = deferred();
+  let reads = 0;
+  t.mock.method(api, "imageStatus", () => ++reads === 1 ? first.promise : second.promise);
+  const older = loadImageStatus(), newer = loadImageStatus();
+  second.resolve({ online: true, ready: true, mode: "internal" });
+  await newer;
+  first.resolve({ online: false, ready: false });
+  await older;
+  assert.equal(game.comfy.ready, true);
+  const late = deferred();
+  t.mock.method(api, "imageStatus", () => late.promise);
+  t.mock.method(api, "stopImageRuntime", async () => ({ online: false, ready: false, stopped: true }));
+  const pending = loadImageStatus();
+  await controlImageRuntime("stop");
+  late.resolve({ online: true, ready: true });
+  await pending;
+  assert.equal(game.comfy.online, false);
+});
+
+test("存档快照中的旧出图状态不能覆盖独立运行时检测", async (t) => {
+  t.mock.method(api, "imageStatus", async () => ({ online: true, ready: true, profiles: [] }));
+  await loadImageStatus();
+  const snapshot = payload();
+  snapshot.comfy = { online: false, ready: false };
+  t.mock.method(api, "getState", async () => snapshot);
+  await openSlot(1);
+  assert.equal(game.comfy.ready, true);
 });

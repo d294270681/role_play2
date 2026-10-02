@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "default": "z-image-turbo",
+  "profiles": [
+    {
+      "id": "z-image-turbo",
+      "title": "Z-Image-Turbo · Qwen3",
+      "description": "现有本机配方；Qwen3 负责文本编码，Z-Image-Turbo 负责生成图像。",
+      "workflow": "z-image-turbo.json",
+      "models": {
+        "unet": { "directory": "diffusion_models", "file": "z_image_turbo_bf16.safetensors" },
+        "clip": { "directory": "text_encoders", "file": "qwen_3_4b.safetensors" },
+        "vae": { "directory": "vae", "file": "ae.safetensors" },
+        "lora": { "directory": "loras", "file": "NSFW_master_ZIT.safetensors" }
+      },
+      "parameters": { "width": 1024, "height": 1024, "steps": 8, "cfg": 1, "shift": 3, "loraStrength": 0.8 },
+      "timeout_seconds": 900
+    },
+    {
+      "id": "qwen-image-2512",
+      "title": "Qwen-Image 2512",
+      "description": "完整 Qwen-Image 图像模型；当前源目录没有对应权重，补齐三个组件后可启用。",
+      "workflow": "qwen-image-2512.json",
+      "models": {
+        "unet": { "directory": "diffusion_models", "file": "qwen_image_2512_fp8_e4m3fn.safetensors" },
+        "clip": { "directory": "text_encoders", "file": "qwen_2.5_vl_7b_fp8_scaled.safetensors" },
+        "vae": { "directory": "vae", "file": "qwen_image_vae.safetensors" }
+      },
+      "parameters": { "width": 1328, "height": 1328, "steps": 50, "cfg": 4, "shift": 3.1 },
+      "timeout_seconds": 1800,
+      "source": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-2512"
+    }
+  ]
+}

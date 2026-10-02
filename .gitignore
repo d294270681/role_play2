@@ -7,3 +7,7 @@ web/client/dist/
 .tower/worktrees/
 __pycache__/
 *.pyc
+ai/vendor/
+ai/runtime/
+ai/models/
+ai/data/

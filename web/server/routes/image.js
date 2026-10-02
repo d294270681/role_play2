@@ -11,9 +11,28 @@ import { Router } from "express";
 
 import * as configMod from "../config.js";
 import * as comfy from "../comfy.js";
-import { ApiError, loadModuleChecked, loadSave, slotArg } from "./shared.js";
+import { ApiError, loadModuleChecked, loadSave, slotArg, withSlotLock } from "./shared.js";
 
 const router = Router();
+
+router.get("/image/status", async (req, res, next) => {
+  try { res.json(await comfy.imageRuntime.status(configMod.loadConfig())); } catch (e) { next(e); }
+});
+
+router.post("/image/runtime/start", async (req, res, next) => {
+  try {
+    const cfg = configMod.loadConfig();
+    await comfy.imageRuntime.ensureReady(cfg, { force: true });
+    res.json(await comfy.imageRuntime.status(cfg));
+  } catch (e) { next(e); }
+});
+
+router.post("/image/runtime/stop", async (req, res, next) => {
+  try {
+    const stopped = await comfy.imageRuntime.stop();
+    res.json({ ...await comfy.imageRuntime.status(configMod.loadConfig()), stopped });
+  } catch (e) { next(e); }
+});
 
 router.post("/image/generate", async (req, res, next) => {
   try {
@@ -23,11 +42,8 @@ router.post("/image/generate", async (req, res, next) => {
     if (!comfy.KINDS.includes(kind)) {
       throw new ApiError(400, `kind 必须是 ${comfy.KINDS.join(" / ")}`);
     }
-    const save = loadSave(entry, slot);
+    const save = await withSlotLock(entry.name, slot, () => loadSave(entry, slot));
     const cfg = configMod.loadConfig();
-    if (!(await comfy.isOnline(cfg.comfy_url))) {
-      throw new comfy.ComfyUnavailableError(`ComfyUI 未在线或不可达：${cfg.comfy_url}（请先启动 ComfyUI，或在 /api/config 修改 comfy_url）`);
-    }
     const out = await comfy.generateImage({
       module: mod,
       state: save,

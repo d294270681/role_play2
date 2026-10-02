@@ -56,7 +56,7 @@ router.get("/game/state", async (req, res, next) => {
     const save = await withSlotLock(entry.name, slot, () => loadSave(entry, slot));
     const cfg = configMod.loadConfig();
     const hasKey = configMod.configHasKey(cfg);
-    const online = await comfy.isOnline(cfg.comfy_url);
+    const imageStatus = await comfy.imageRuntime.status(cfg);
     res.json({
       module: {
         name: entry.name,
@@ -82,7 +82,7 @@ router.get("/game/state", async (req, res, next) => {
       events: (mod.events || []).map((e) => ({ code: e.code, name: e.name, special: Boolean(e.special) })),
       has_key: hasKey,
       echo: !hasKey,
-      comfy: { online, url: cfg.comfy_url },
+      comfy: imageStatus,
     });
   } catch (e) {
     next(e);

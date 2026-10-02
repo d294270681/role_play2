@@ -185,7 +185,8 @@ function absorb(payload) {
   game.events = payload.events || [];
   game.hasKey = Boolean(payload.has_key);
   game.echo = Boolean(payload.echo);
-  game.comfy = payload.comfy || { online: false, url: "" };
+  // 独立状态检测已建立后，存档快照里的旧服务状态不再覆盖它。
+  if (!game.comfy?.profiles) game.comfy = payload.comfy || { online: false, url: "" };
 }
 
 /** 当前地点卡（用后端同一套匹配规则做模糊定位）。 */
@@ -634,11 +635,48 @@ export async function loadConfig() {
     game.hasKey = Boolean(game.config?.has_key);
     game.echo = Boolean(game.config?.echo);
     game.comfy = { online: game.comfy?.online ?? false, url: game.config?.comfy_url || game.comfy?.url || "" };
+    void watchImageStartup();
     return game.config;
   } catch (e) {
     reportError(e);
     return null;
   }
+}
+
+let _imageStatusRequest = 0;
+let _imageWatch = null;
+
+/** 出图服务检测与存档独立，没有开档时也能管理运行时。 */
+export async function loadImageStatus({ silent = false } = {}) {
+  const request = ++_imageStatusRequest;
+  try {
+    const status = await api.imageStatus();
+    if (request === _imageStatusRequest) game.comfy = status;
+    return game.comfy;
+  } catch (e) { if (!silent && request === _imageStatusRequest) reportError(e); return null; }
+}
+
+/** 冷启动完成后自动更新出图按钮，不要求玩家手动回读存档。 */
+function watchImageStartup() {
+  if (_imageWatch) return _imageWatch;
+  _imageWatch = (async () => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const status = await loadImageStatus({ silent: true });
+      if (!status || status.state !== "starting") return;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+  })().finally(() => { _imageWatch = null; });
+  return _imageWatch;
+}
+
+export async function controlImageRuntime(action) {
+  try {
+    const status = action === "start" ? await api.startImageRuntime() : await api.stopImageRuntime();
+    _imageStatusRequest += 1;
+    game.comfy = status;
+    notify(action === "start" ? "出图服务已就绪" : game.comfy.stopped ? "项目内出图服务已停止" : "当前没有由游戏管理的出图进程", "info");
+    return game.comfy;
+  } catch (e) { reportError(e); return null; }
 }
 
 export async function saveConfig(patch) {
@@ -647,16 +685,7 @@ export async function saveConfig(patch) {
     game.hasKey = Boolean(game.config?.has_key);
     game.echo = Boolean(game.config?.echo);
     notify("配置已保存", "success");
-    // 重新探测 ComfyUI（后端 /api/game/state 才会回 comfy.online）
-    if (game.loaded) {
-      const context = session();
-      try {
-        const data = await api.getState(context.module, context.slot);
-        if (isCurrent(context)) game.comfy = data.comfy || game.comfy;
-      } catch {
-        /* 忽略：配置已落盘 */
-      }
-    }
+    await loadImageStatus();
     return game.config;
   } catch (e) {
     reportError(e);

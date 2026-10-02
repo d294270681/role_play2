@@ -30,6 +30,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import * as authMod from "./auth.js";
+import { imageSettings } from "./image/profiles.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -42,11 +43,12 @@ export const DEFAULT_CONFIG = {
   model: "gpt-4o-mini",
   temperature: 0.8,
   comfy_url: "http://127.0.0.1:8188",
+  image_generation: imageSettings(),
   stream: true,
   timeout: 180,
 };
 
-/** 模板里只写任务约定的五个键（stream / timeout 走默认值，不落盘）。 */
+/** 新安装默认由项目管理出图服务；认证字段与旧配置兼容。 */
 export function templateConfig() {
   return {
     base_url: DEFAULT_CONFIG.base_url,
@@ -54,11 +56,12 @@ export function templateConfig() {
     model: DEFAULT_CONFIG.model,
     temperature: DEFAULT_CONFIG.temperature,
     comfy_url: DEFAULT_CONFIG.comfy_url,
+    image_generation: imageSettings(),
   };
 }
 
 export function defaultConfig() {
-  return { ...DEFAULT_CONFIG };
+  return { ...DEFAULT_CONFIG, image_generation: imageSettings() };
 }
 
 function toInt(v, dflt = 0) {
@@ -87,6 +90,8 @@ export function normalizeConfig(config) {
   cfg.model = String(cfg.model || DEFAULT_CONFIG.model).trim();
   cfg.temperature = toFloat(cfg.temperature, DEFAULT_CONFIG.temperature, 0, 2);
   cfg.comfy_url = String(cfg.comfy_url || DEFAULT_CONFIG.comfy_url).trim().replace(/\/+$/, "");
+  cfg.image_generation = imageSettings(cfg.image_generation);
+  if (cfg.image_generation.mode === "internal") cfg.comfy_url = `http://127.0.0.1:${cfg.image_generation.port}`;
   cfg.stream = cfg.stream !== false;
   cfg.timeout = Math.max(5, toInt(cfg.timeout, DEFAULT_CONFIG.timeout));
   if ("kimi_oauth" in cfg) {
@@ -150,8 +155,10 @@ export function saveConfig(config, configPath = null) {
 export function updateConfig(patch, configPath = null) {
   const cfg = loadConfig(configPath);
   if (patch && typeof patch === "object" && !Array.isArray(patch)) {
-    for (const key of ["base_url", "api_key", "model", "temperature", "comfy_url", "stream", "timeout", "kimi_oauth"]) {
-      if (key in patch && patch[key] !== null && patch[key] !== undefined) cfg[key] = patch[key];
+    for (const key of ["base_url", "api_key", "model", "temperature", "comfy_url", "image_generation", "stream", "timeout", "kimi_oauth"]) {
+      if (key in patch && patch[key] !== null && patch[key] !== undefined) {
+        cfg[key] = key === "image_generation" ? imageSettings({ ...cfg.image_generation, ...patch[key] }) : patch[key];
+      }
     }
   }
   saveConfig(cfg, configPath);
@@ -170,6 +177,7 @@ export function maskedConfig(config) {
     stream: cfg.stream,
     timeout: cfg.timeout,
     comfy_url: cfg.comfy_url,
+    image_generation: { ...cfg.image_generation },
     has_key: Boolean(key) || oauth,
     api_key_tail: key.length >= 4 ? key.slice(-4) : (key ? "***" : ""),
     echo: !key && !oauth,

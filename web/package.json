@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "test": "node --test server/engine/rules.test.mjs server/routes/reliability.test.mjs client/src/store.test.mjs",
+    "test": "node --test server/engine/rules.test.mjs server/routes/reliability.test.mjs server/image/image.test.mjs client/src/store.test.mjs",
+    "ai:import": "node ../scripts/import-image-runtime.mjs",
+    "ai:verify": "node ../scripts/verify-image-runtime.mjs",
     "verify": "node server/engine/verify-parity.mjs && npm test && node -e \"Promise.all(['./server/config.js','./server/auth.js','./server/comfy.js','./server/gm.js','./server/index.js','./server/routes/index.js'].map((p) => import(p))).then(() => console.log('[verify] 全部服务端模块加载 OK')).catch((e) => { console.error(e); process.exit(1); })\""
   },
   "dependencies": {
