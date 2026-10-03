@@ -5,8 +5,8 @@
  * 按到达顺序渲染。后端 SSE 边到边追加；narrative 条目带 pending 队列，
  * 由本文件的打字机定时器按节奏吐出，实现增量打字渲染（点剧情流可跳过动画）。
  *
- * 所有玩家编辑（属性/技能/仪表/道具/关系/线索/进度钟/时间/经验加点）统一走
- * /api/state/edit，服务端返回的新存档直接覆盖本地 state，保证前后端一致。
+ * 世界资料由 GM 与规则结算后更新；玩家可通过 /api/state/edit 消耗经验成长。
+ * HTTP / SSE 的公开状态与解锁资料保持同步。
  */
 
 import { reactive } from "vue";
@@ -21,6 +21,10 @@ import {
   saveLocal,
 } from "./util.js";
 import { VIEWS, openingText } from "./ui.js";
+import {
+  isPlayerEdit,
+  WORLD_EDIT_MESSAGE,
+} from "../../shared/playerActions.js";
 
 const TYPE_TICK_MS = 24;
 const TYPE_DIVISOR = 10;
@@ -211,13 +215,22 @@ function absorb(payload) {
   game.state = payload.state || null;
   game.map = payload.map || { locations: [], routes: [] };
   game.characters = payload.characters || [];
-  game.events = payload.events || [];
+  game.events = payload.unlocked_events || payload.events || [];
   // 独立配置保存后，迟到的存档快照不能把模型状态改回旧值。
   game.hasKey = Boolean(game.config ? game.config.has_key : payload.has_key);
   game.echo = Boolean(game.config ? game.config.echo : payload.echo);
   // 独立状态检测已建立后，存档快照里的旧服务状态不再覆盖它。
   if (!game.comfy?.profiles)
     game.comfy = payload.comfy || { online: false, url: "" };
+}
+
+/** 一次结算同时更新状态与新解锁资料；兼容不携带索引的旧响应。 */
+function absorbProgress(payload) {
+  _stateRevision += 1;
+  game.state = payload.state;
+  if (Array.isArray(payload.characters)) game.characters = payload.characters;
+  if (Array.isArray(payload.unlocked_events))
+    game.events = payload.unlocked_events;
 }
 
 /** 当前地点卡（用后端同一套匹配规则做模糊定位）。 */
@@ -543,8 +556,7 @@ export async function sendAction(text) {
         }
         case "state": {
           if (ev.state) {
-            _stateRevision += 1;
-            game.state = ev.state;
+            absorbProgress(ev);
             sawState = true;
           }
           game.suggestions = Array.isArray(ev.suggestions)
@@ -660,8 +672,7 @@ export async function moveTo(target) {
     const data = await api.move(context.module, context.slot, to);
     if (!isCurrent(context)) return false;
     if (data.state) {
-      _stateRevision += 1;
-      game.state = data.state;
+      absorbProgress(data);
     }
     pushStream({ kind: "system", text: `移动 → ${to}` });
     for (const change of data.changes || [])
@@ -685,7 +696,7 @@ export async function moveTo(target) {
 }
 
 // ---------------------------------------------------------------------------
-// 结构化编辑（/api/state/edit）
+// 玩家成长（/api/state/edit）；世界资料由剧情结算更新。
 // ---------------------------------------------------------------------------
 export async function applyEdit(op, { silent = false } = {}) {
   if (game.busy) {
@@ -696,6 +707,10 @@ export async function applyEdit(op, { silent = false } = {}) {
     if (!silent) notify("还没有载入存档", "warn");
     return false;
   }
+  if (!isPlayerEdit(op)) {
+    if (!silent) notify(WORLD_EDIT_MESSAGE, "warn");
+    return false;
+  }
   const context = session();
   _stateRevision += 1;
   game.busy = true;
@@ -703,8 +718,7 @@ export async function applyEdit(op, { silent = false } = {}) {
     const data = await api.edit(context.module, context.slot, op);
     if (!isCurrent(context)) return false;
     if (data.ok && data.state) {
-      _stateRevision += 1;
-      game.state = data.state;
+      absorbProgress(data);
     }
     if (!silent) {
       if (data.ok) notify(data.message || "已保存", "success", 2600);

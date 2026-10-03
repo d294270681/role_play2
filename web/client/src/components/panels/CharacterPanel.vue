@@ -1,99 +1,21 @@
 <script setup>
 import { computed, ref, watch } from "vue";
-
 import { applyEdit, game, generateImage, notify } from "../../store.js";
 import { ATTRS, SKILLS, SKILL_ATTR } from "../../util.js";
 import AttributeRadar from "../AttributeRadar.vue";
 import GaugeMeter from "../GaugeMeter.vue";
 import Icon from "../Icon.vue";
 import { resourceRows } from "../../ui.js";
-const editing = ref(false);
-
 const ch = computed(() => game.state?.character || {});
-const gauges = computed(() =>
-  resourceRows(game.state).map((row) => [row.name, ch.value.gauges[row.name]]),
-);
+const gauges = computed(() => resourceRows(game.state));
 const xp = computed(() => Number(ch.value.xp) || 0);
-
 const portraitBusy = ref(false);
-const busyGauge = ref("");
-
 function attrValue(name) {
   return Number(ch.value.attributes?.[name]) || 0;
 }
 function skillValue(name) {
   return Number(ch.value.skills?.[name]) || 0;
 }
-
-async function setAttr(name, value) {
-  const v = Number(value);
-  if (!Number.isFinite(v) || v === attrValue(name)) return;
-  await applyEdit({ op: "set_attr", name, value: v });
-}
-
-async function setSkill(name, value) {
-  const v = Number(value);
-  if (!Number.isFinite(v) || v === skillValue(name)) return;
-  await applyEdit({ op: "set_skill", name, value: v });
-}
-
-async function setGauge(name, field, value) {
-  if (field === "value")
-    await applyEdit({ op: "set_gauge", name, value: Number(value) });
-  else await applyEdit({ op: "set_gauge", name, max: Number(value) });
-}
-
-async function bumpGauge(name, delta) {
-  const g = ch.value.gauges?.[name];
-  if (!g) return;
-  busyGauge.value = name;
-  await applyEdit({
-    op: "set_gauge",
-    name,
-    value: (Number(g.value) || 0) + delta,
-  });
-  busyGauge.value = "";
-}
-
-// 新增仪表
-const newGaugeName = ref("");
-const newGaugeMax = ref(10);
-async function addGauge() {
-  const name = newGaugeName.value.trim();
-  if (!name) return;
-  if (ch.value.gauges?.[name]) {
-    notify(`仪表「${name}」已存在`, "warn");
-    return;
-  }
-  const ok = await applyEdit({
-    op: "set_gauge",
-    name,
-    value: 0,
-    max: Number(newGaugeMax.value) || 10,
-  });
-  if (ok) {
-    newGaugeName.value = "";
-    newGaugeMax.value = 10;
-  }
-}
-async function resetGauge(name) {
-  await applyEdit({ op: "set_gauge", name, value: 0 });
-}
-
-// 特质 / 状态 chips
-const newTrait = ref("");
-const newStatus = ref("");
-async function addTrait() {
-  const t = newTrait.value.trim();
-  if (!t) return;
-  if (await applyEdit({ op: "add_trait", text: t })) newTrait.value = "";
-}
-async function addStatus() {
-  const s = newStatus.value.trim();
-  if (!s) return;
-  if (await applyEdit({ op: "add_status", text: s })) newStatus.value = "";
-}
-
 // 经验加点：跳级逐级累计，费用与后端 core §6.2 一致。
 const xpKind = ref("skill");
 const xpName = ref("");
@@ -160,23 +82,15 @@ async function makePortrait() {
   if (data) notify("头像已生成", "success");
 }
 </script>
-
 <template>
   <div v-if="!game.loaded" class="empty-hint">
     还没有角色档案。打开「冒险与存档」，载入或新建一个角色。
   </div>
   <template v-else>
     <div class="panel-toolbar">
-      <span class="hint">阅读角色信息；需要调整时再打开编辑。</span
-      ><button
-        class="secondary-button"
-        :aria-pressed="editing"
-        @click="editing = !editing"
+      <span class="hint"
+        >资源、状态与经验随冒险结算；提升能力需要消耗已获得的经验。</span
       >
-        <Icon :name="editing ? 'check' : 'settings'" :size="14" />{{
-          editing ? "完成编辑" : "编辑档案"
-        }}
-      </button>
     </div>
     <div class="character-sheet">
       <section class="card character-hero">
@@ -230,104 +144,32 @@ async function makePortrait() {
           </button>
         </div>
       </section>
+
       <section class="card attributes-card">
         <h3 class="section-label">六维属性</h3>
         <div class="attribute-content">
           <AttributeRadar :attributes="ch.attributes || {}" />
           <div class="attribute-list">
             <div v-for="attr in ATTRS" :key="attr" class="attribute-row">
-              <span>{{ attr }}</span
-              ><n-input-number
-                v-if="editing"
-                :value="attrValue(attr)"
-                :min="1"
-                :max="5"
-                :disabled="game.busy"
-                size="small"
-                style="width: 110px"
-                @change="(value) => setAttr(attr, value)"
-              /><template v-else
-                ><div class="attribute-dots">
-                  <i
-                    v-for="i in 5"
-                    :key="i"
-                    :class="{ filled: i <= attrValue(attr) }"
-                  ></i>
-                </div>
-                <b>{{ attrValue(attr) }}</b></template
-              >
+              <span>{{ attr }}</span>
+              <div class="attribute-dots">
+                <i
+                  v-for="i in 5"
+                  :key="i"
+                  :class="{ filled: i <= attrValue(attr) }"
+                ></i>
+              </div>
+              <b>{{ attrValue(attr) }}</b>
             </div>
           </div>
         </div>
-        <p class="hint">属性范围 1–5。提升属性会同步影响相应的衍生资源。</p>
       </section>
       <section class="card resources-card">
         <h3 class="section-label">资源与状态</h3>
         <div class="character-gauges">
-          <div
-            v-for="[name, gauge] in gauges"
-            :key="name"
-            class="character-gauge"
-          >
-            <GaugeMeter :name="name" :gauge="gauge" />
-            <div v-if="editing" class="gauge-edit">
-              <n-input-number
-                :value="Number(gauge.value) || 0"
-                :disabled="game.busy"
-                :min="0"
-                size="small"
-                aria-label="当前值"
-                @change="(value) => setGauge(name, 'value', value)"
-              /><span>/</span
-              ><n-input-number
-                :value="Number(gauge.max) || 0"
-                :disabled="game.busy"
-                :min="1"
-                size="small"
-                aria-label="上限"
-                @change="(value) => setGauge(name, 'max', value)"
-              /><button
-                class="mini"
-                :disabled="game.busy"
-                :aria-label="name + '加1'"
-                @click="bumpGauge(name, 1)"
-              >
-                +1</button
-              ><button
-                class="mini"
-                :disabled="game.busy"
-                :aria-label="name + '减1'"
-                @click="bumpGauge(name, -1)"
-              >
-                −1</button
-              ><button
-                class="mini"
-                :disabled="game.busy"
-                :title="name + '归零，保留上限'"
-                @click="resetGauge(name)"
-              >
-                归零
-              </button>
-            </div>
+          <div v-for="row in gauges" :key="row.name" class="resource-block">
+            <GaugeMeter :name="row.name" :gauge="row" />
           </div>
-        </div>
-        <div v-if="editing" class="add-row">
-          <n-input
-            v-model:value="newGaugeName"
-            size="small"
-            placeholder="自定义资源名"
-          /><n-input-number
-            v-model:value="newGaugeMax"
-            size="small"
-            :min="1"
-            :max="999"
-            style="width: 88px"
-          /><n-button
-            size="small"
-            :disabled="game.busy || !newGaugeName.trim()"
-            @click="addGauge"
-            >添加</n-button
-          >
         </div>
         <div class="traits-section">
           <h4>特质</h4>
@@ -336,30 +178,8 @@ async function makePortrait() {
               v-for="trait in ch.traits || []"
               :key="trait"
               class="chip trait"
-              >{{ trait
-              }}<button
-                v-if="editing"
-                class="chip-remove"
-                :disabled="game.busy"
-                :aria-label="'移除特质' + trait"
-                @click="applyEdit({ op: 'remove_trait', text: trait })"
-              >
-                ×
-              </button></span
+              >{{ trait }}</span
             ><span v-if="!ch.traits?.length" class="hint">暂无特质</span>
-          </div>
-          <div v-if="editing" class="add-row">
-            <n-input
-              v-model:value="newTrait"
-              size="small"
-              placeholder="添加特质（最多4项）"
-              @keyup.enter="addTrait"
-            /><n-button
-              size="small"
-              :disabled="game.busy || !newTrait.trim()"
-              @click="addTrait"
-              >添加</n-button
-            >
           </div>
         </div>
         <div class="traits-section">
@@ -369,31 +189,9 @@ async function makePortrait() {
               v-for="status in ch.statuses || []"
               :key="status"
               class="chip status"
-              >{{ status
-              }}<button
-                v-if="editing"
-                class="chip-remove"
-                :disabled="game.busy"
-                :aria-label="'移除状态' + status"
-                @click="applyEdit({ op: 'remove_status', text: status })"
-              >
-                ×
-              </button></span
+              >{{ status }}</span
             ><span v-if="!ch.statuses?.length" class="healthy-state"
               ><Icon name="check" :size="14" />暂无异常状态</span
-            >
-          </div>
-          <div v-if="editing" class="add-row">
-            <n-input
-              v-model:value="newStatus"
-              size="small"
-              placeholder="添加状态"
-              @keyup.enter="addStatus"
-            /><n-button
-              size="small"
-              :disabled="game.busy || !newStatus.trim()"
-              @click="addStatus"
-              >添加</n-button
             >
           </div>
         </div>
@@ -410,18 +208,8 @@ async function makePortrait() {
             <span
               ><b>{{ skill }}</b
               ><small>{{ SKILL_ATTR[skill] }}</small></span
-            ><n-input-number
-              v-if="editing"
-              :value="skillValue(skill)"
-              :min="0"
-              :max="3"
-              :disabled="game.busy"
-              size="small"
-              style="width: 106px"
-              @change="(value) => setSkill(skill, value)"
-            />
+            >
             <div
-              v-else
               class="skill-level"
               :aria-label="skill + ' ' + skillValue(skill) + '级'"
             >
@@ -696,27 +484,6 @@ async function makePortrait() {
   border-color: #7998ba45;
   color: var(--azure);
   background: #7ca6d00a;
-}
-.chip-remove {
-  background: none;
-  border: 0;
-  color: inherit;
-  padding: 0;
-}
-.healthy-state {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--moss);
-  font-size: 11px;
-}
-.add-row {
-  display: flex;
-  gap: 7px;
-  margin-top: 13px;
-}
-.skills-card {
-  grid-column: 1;
 }
 .skill-grid {
   display: grid;

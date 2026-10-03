@@ -239,7 +239,10 @@ test("当前行动不会重复进入历史，被拒绝的编辑不替换本地�
   );
   await sendAction("当前行动");
   t.mock.method(api, "edit", async () => ({ ok: false, state: { day: 999 } }));
-  assert.equal(await applyEdit({ op: "set_time", period: "不存在" }), false);
+  assert.equal(
+    await applyEdit({ op: "spend_xp", kind: "skill", name: "察觉", to: 99 }),
+    false,
+  );
   assert.equal(game.state.day, 1);
 });
 
@@ -310,6 +313,58 @@ test("断流且回读失败时保持不可行动，避免在旧状态上继续",
   assert.equal(game.busy, false);
   assert.equal(canSend(), false);
   assert.match(game.lastError, /离线/);
+});
+
+test("玩家编辑仅允许经验成长，直接添加世界资料不会发送 API", async (t) => {
+  game.loaded = true;
+  game.state = payload().state;
+  const before = JSON.parse(JSON.stringify(game.state));
+  let calls = 0;
+  t.mock.method(api, "edit", async () => {
+    calls += 1;
+    return { ok: false };
+  });
+  for (const op of [
+    "add_item",
+    "set_relation",
+    "add_clock",
+    "add_clue",
+    "set_gauge",
+    "set_attr",
+    "set_xp",
+  ]) {
+    assert.equal(await applyEdit({ op, value: 999, text: "测试" }), false);
+  }
+  assert.equal(calls, 0);
+  assert.deepEqual(game.state, before);
+  assert.equal(
+    await applyEdit({ op: "spend_xp", kind: "skill", name: "察觉", to: 2 }),
+    false,
+  );
+  assert.equal(calls, 1);
+});
+
+test("回合结算后即时显示新解锁的人物与事件，不需要重新载入", async (t) => {
+  game.loaded = true;
+  game.state = payload().state;
+  const characters = [{ name: "新相识的人物", meta: { 外貌: "灰色外套" } }];
+  const events = [{ code: "53", name: "已经触发的事件" }];
+  t.mock.method(api, "streamTurn", async function* () {
+    yield {
+      type: "state",
+      state: {
+        ...payload().state,
+        relations: [{ npc: characters[0].name, value: 0 }],
+      },
+      characters,
+      unlocked_events: events,
+    };
+    yield { type: "done" };
+  });
+  await sendAction("交谈并调查");
+  assert.deepEqual(game.characters, characters);
+  assert.deepEqual(game.events, events);
+  assert.equal(game.state.relations[0].npc, characters[0].name);
 });
 
 test("SSE 消费方提前结束迭代时取消响应流并释放读取锁", async (t) => {

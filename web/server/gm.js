@@ -252,6 +252,15 @@ const _STYLE_SPEC = `## 叙述要求
 - 每次回复 3–6 段；不要替玩家做决定，结尾留出玩家下一步行动的空间。
 - 除末尾的协议 JSON 块外，不要输出任何其他 JSON、代码块或系统说明。`;
 
+const _PROGRESSION_SPEC = `## 游戏过程与资料解锁
+- 玩家界面只读取已经发生的结果，不能直接添加物品、人物关系、线索或进度钟。你必须在最终 state_patch 中记录本回合实际产生的变化。
+- 获得、购买、使用、出售或丢弃物品后，用 items 更新真实数量与备注，并同时结算必要的 funds 等代价。开局装备来自角色卡；玩家自称获得物品不等于已经获得。
+- 初次实际认识一个人物时，即使关系仍为 0，也用 relations 登记 npc、set:0 和简短的公开相识说明。后续关系变化必须来自实际互动。角色卡里的默认态度不代表玩家已经认识此人。
+- 发现可核实的事实或调查方向时才用 clues_add；调查已得到结果或线索被解决时才用 clues_done。不要把玩家的猜测直接当成已证实事实，也不要让玩家自称完成任务代替结算。
+- 目标、期限或威胁在剧情中真正建立后，用 clocks 的 create 记录格数与玩家可理解的后果，再根据行动与事件合理 advance。需要满格时在叙述和最终补丁中处理实际后果，不要求玩家自己加格。
+- NPC 秘密、未见人物的资料与尚未触发的剧情留给 GM；不要提前写入公开的关系备注、线索、威胁后果或事件记录。party 是 NPC 动态状态，不等于所有 NPC 都在与玩家同行。
+- 没有新的发现、物品或关系变化时不强行增加记录。所有判定与耗时依照规则，结构化结算与叙述必须一致。`;
+
 const _PROTOCOL_SPEC = `## 输出协议（必须严格遵守）
 
 你的每次回复 = 叙述正文 + 末尾一个 \`\`\`json 围栏块。JSON 块格式：
@@ -435,7 +444,7 @@ function sanitizeHistory(history) {
 
 /** 组装一次 GM 调用的对话，返回 [messages, meta]。 */
 export function buildMessages(module, save, action, config = null, history = null) {
-  const parts = [gmPreamble(module), _STYLE_SPEC];
+  const parts = [gmPreamble(module), _STYLE_SPEC, _PROGRESSION_SPEC];
   const rules = clip(module.rules_text || "", MAX_RULES, "\n…（规则文本截断）");
   if (rules.trim()) parts.push(`## 玩法规则（来源：${module.rules_source || "core/rules.md"}）\n${rules}`);
   const overrides = clip(module.overrides || "", MAX_OVERRIDES, "\n…（规则覆盖截断）");

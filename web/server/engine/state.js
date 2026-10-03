@@ -484,16 +484,7 @@ export function newGame(moduleName, slot = 1, characterName = null) {
       note: pyText(r.note),
     });
   }
-  for (const c of mod.characters || []) {
-    if (c === card || c.attitude === null || c.attitude === undefined) continue;
-    if (!relations.some((r) => r.npc === c.name)) {
-      relations.push({
-        npc: c.name,
-        value: clamp(toInt(c.attitude, 0), -5, 5),
-        note: "对主角态度",
-      });
-    }
-  }
+  // NPC 卡的态度供 GM 裁决；玩家只在开局关系或实际相识后解锁记录。
 
   const inventory = ((card || {}).inventory || [])
     .filter((it) => isDict(it) && it.name)

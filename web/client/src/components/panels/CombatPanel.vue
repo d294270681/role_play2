@@ -131,7 +131,7 @@ const alerts = computed(() => resourceAlerts(game.state));
         <div class="stage-heading">
           <h3>随身装备</h3>
           <button class="text-button" @click="navigate('items')">
-            管理背包<Icon name="arrow" :size="14" />
+            查看背包<Icon name="arrow" :size="14" />
           </button>
         </div>
         <div class="gear-list">
@@ -147,9 +147,7 @@ const alerts = computed(() => resourceAlerts(game.state));
         </div>
         <p class="hint">
           当前负重 {{ inventoryLoad(game.state.inventory) }} /
-          {{
-            character.capacity || 0
-          }}
+          {{ character.capacity || 0 }}
           格。列表展示携带物品，不代表已装备到战斗槽位。
         </p>
       </section>

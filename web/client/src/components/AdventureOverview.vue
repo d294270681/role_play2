@@ -11,7 +11,11 @@ const clues = computed(() =>
 );
 const clocks = computed(() => game.state?.clocks || []);
 const scene = computed(() => game.locationImage?.[loc.value?.name] || "");
-const party = computed(() => Object.entries(game.state?.party || {}));
+const party = computed(() =>
+  Object.entries(game.state?.party || {}).filter(([name]) =>
+    game.state?.relations?.some((relation) => relation.npc === name),
+  ),
+);
 </script>
 <template>
   <aside class="overview">
@@ -99,7 +103,7 @@ const party = computed(() => Object.entries(game.state?.party || {}));
     </section>
     <section v-if="party.length" class="overview-card">
       <div class="card-heading">
-        <h3><Icon name="users" :size="16" />同行者</h3>
+        <h3><Icon name="users" :size="16" />已知人物</h3>
         <button
           class="icon-button"
           title="查看人物关系"
@@ -117,7 +121,9 @@ const party = computed(() => Object.entries(game.state?.party || {}));
         <span class="avatar-letter">{{ name.slice(0, 1) }}</span
         ><span
           ><b>{{ name }}</b
-          ><small>{{ member.statuses?.join(" · ") || "同行中" }}</small></span
+          ><small>{{
+            member.statuses?.join(" · ") || "查看已知状态"
+          }}</small></span
         >
       </button>
     </section>

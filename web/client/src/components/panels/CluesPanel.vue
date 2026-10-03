@@ -1,29 +1,19 @@
 <script setup>
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import Icon from "../Icon.vue";
-import { applyEdit, game } from "../../store.js";
-const clues = computed(() => game.state?.clues || []),
-  active = computed(() => clues.value.filter((clue) => !clue.done)),
-  done = computed(() => clues.value.filter((clue) => clue.done));
-const showAdd = ref(false),
-  draft = ref(""),
-  editing = ref(false);
+import { game, stageAction } from "../../store.js";
+const clues = computed(() => game.state?.clues || []);
+const active = computed(() => clues.value.filter((clue) => !clue.done));
+const done = computed(() => clues.value.filter((clue) => clue.done));
 const progress = computed(() =>
   clues.value.length
     ? Math.round((done.value.length / clues.value.length) * 100)
     : 0,
 );
-async function add() {
-  if (!draft.value.trim()) return;
-  if (await applyEdit({ op: "add_clue", text: draft.value.trim() })) {
-    draft.value = "";
-    showAdd.value = false;
-  }
-}
 </script>
 <template>
   <div v-if="!game.loaded" class="empty-hint">
-    载入存档后，记录你发现的线索，并追踪它们的进展。
+    载入存档后，旅途中发现的线索会自动记录在这里。
   </div>
   <template v-else>
     <div class="panel-toolbar">
@@ -33,28 +23,14 @@ async function add() {
           >待追踪</span
         ><span
           ><b>{{ done.length }}</b
-          >已完成</span
+          >已解决</span
         >
         <div class="summary-progress">
           <i :style="{ width: progress + '%' }"></i>
         </div>
         <small>{{ progress }}%</small>
       </div>
-      <div class="toolbar-buttons">
-        <button
-          class="secondary-button"
-          :aria-pressed="editing"
-          @click="editing = !editing"
-        >
-          {{ editing ? "完成管理" : "管理线索" }}</button
-        ><button
-          class="primary-button"
-          :disabled="game.busy"
-          @click="showAdd = true"
-        >
-          <Icon name="plus" :size="15" />记录线索
-        </button>
-      </div>
+      <p class="hint">新发现自动记录，调查解决后由剧情归档。</p>
     </div>
     <div class="clue-board">
       <section class="clue-column">
@@ -65,28 +41,23 @@ async function add() {
         </div>
         <article
           v-for="(clue, index) in active"
-          :key="clue.text"
+          :key="index + ':' + clue.text"
           class="clue-card"
         >
           <div class="clue-card-top">
-            <span>线索 {{ String(index + 1).padStart(2, "0") }}</span
-            ><button
-              v-if="editing"
-              class="icon-button remove-clue"
-              :disabled="game.busy"
-              :aria-label="'删除线索' + clue.text"
-              @click="applyEdit({ op: 'remove_clue', text: clue.text })"
-            >
-              <Icon name="close" :size="15" />
-            </button>
+            <span>线索 {{ String(index + 1).padStart(2, "0") }}</span>
           </div>
           <p>{{ clue.text }}</p>
           <button
             class="clue-complete"
             :disabled="game.busy"
-            @click="applyEdit({ op: 'toggle_clue', text: clue.text })"
+            :aria-label="'调查线索' + clue.text"
+            @click="stageAction('调查线索：' + clue.text)"
           >
-            <span class="check-box"></span>标记完成
+            <Icon name="search" :size="14" />沿这条线索调查<Icon
+              name="arrow"
+              :size="14"
+            />
           </button>
         </article>
         <div v-if="!active.length" class="empty-column">
@@ -94,8 +65,8 @@ async function add() {
           <p>
             {{
               done.length
-                ? "所有已记录线索都已完成。"
-                : "新的发现，从记下一条线索开始。"
+                ? "目前已发现的线索均已解决，继续探索寻找新发现。"
+                : "还没有发现线索。调查地点或与人物交谈，会带来新的发现。"
             }}
           </p>
         </div>
@@ -103,61 +74,26 @@ async function add() {
       <section class="clue-column completed">
         <div class="column-heading">
           <span class="column-dot"></span>
-          <h3>已完成</h3>
+          <h3>已解决</h3>
           <span>{{ done.length }}</span>
         </div>
-        <article v-for="clue in done" :key="clue.text" class="clue-card">
+        <article
+          v-for="(clue, index) in done"
+          :key="index + ':' + clue.text"
+          class="clue-card"
+        >
           <div class="clue-card-top">
-            <span><Icon name="check" :size="12" />已完成</span
-            ><button
-              v-if="editing"
-              class="icon-button remove-clue"
-              :disabled="game.busy"
-              :aria-label="'删除线索' + clue.text"
-              @click="applyEdit({ op: 'remove_clue', text: clue.text })"
-            >
-              <Icon name="close" :size="15" />
-            </button>
+            <span><Icon name="check" :size="12" />已解决</span>
           </div>
           <p>{{ clue.text }}</p>
-          <button
-            class="clue-complete"
-            :disabled="game.busy"
-            @click="applyEdit({ op: 'toggle_clue', text: clue.text })"
-          >
-            重新打开<Icon name="refresh" :size="12" />
-          </button>
+          <span class="hint">结果已随冒险记录保存。</span>
         </article>
         <div v-if="!done.length" class="empty-column">
           <Icon name="check" :size="28" />
-          <p>完成的线索会归档在这里。</p>
+          <p>查明或解决的线索会在这里归档。</p>
         </div>
       </section>
     </div>
-    <n-modal
-      v-model:show="showAdd"
-      preset="card"
-      title="记录一条线索"
-      style="max-width: 500px"
-      :bordered="false"
-      ><n-input
-        v-model:value="draft"
-        type="textarea"
-        :autosize="{ minRows: 4, maxRows: 8 }"
-        placeholder="发现了什么？下一步可以追踪什么？"
-        @keyup.ctrl.enter="add"
-      /><template #footer
-        ><div class="modal-actions">
-          <n-button @click="showAdd = false">取消</n-button
-          ><n-button
-            type="primary"
-            :disabled="game.busy || !draft.trim()"
-            @click="add"
-            >加入线索板</n-button
-          >
-        </div></template
-      ></n-modal
-    >
   </template>
 </template>
 <style scoped>
@@ -193,10 +129,7 @@ async function add() {
   font-size: 10px;
   margin-left: -14px;
 }
-.toolbar-buttons {
-  display: flex;
-  gap: 8px;
-}
+
 .clue-board {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -275,21 +208,13 @@ async function add() {
 .clue-complete:hover {
   color: var(--moss);
 }
-.check-box {
-  width: 12px;
-  height: 12px;
-  border: 1px solid var(--line-bright);
-  border-radius: 3px;
-}
 .completed .clue-card-top > span {
   color: var(--moss);
 }
 .completed .clue-card p {
   color: var(--text-dim);
 }
-.remove-clue {
-  color: var(--blood);
-}
+
 .empty-column {
   padding: 58px 20px;
   text-align: center;
@@ -299,11 +224,7 @@ async function add() {
   font-size: 12px;
   line-height: 1.8;
 }
-.modal-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
+
 @media (max-width: 1200px) {
   .clue-summary {
     gap: 14px;

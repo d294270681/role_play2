@@ -12,7 +12,7 @@ import * as loader from "../engine/moduleLoader.js";
 import * as stateMod from "../engine/state.js";
 import * as configMod from "../config.js";
 import * as comfy from "../comfy.js";
-import { cardPublic, loadModuleChecked, loadSave, slotArg, statePublic, withSlotLock } from "./shared.js";
+import { loadModuleChecked, loadSave, slotArg, progressPublic, withSlotLock } from "./shared.js";
 
 const router = Router();
 
@@ -57,6 +57,7 @@ router.get("/game/state", async (req, res, next) => {
     const cfg = configMod.loadConfig();
     const hasKey = configMod.configHasKey(cfg);
     const imageStatus = await comfy.imageRuntime.status(cfg);
+    const progress = progressPublic(save, mod);
     res.json({
       module: {
         name: entry.name,
@@ -70,7 +71,8 @@ router.get("/game/state", async (req, res, next) => {
         opening: mod.opening,
         warnings: (mod.warnings || []).slice(0, 20),
       },
-      state: statePublic(save, mod),
+      ...progress,
+      events: progress.unlocked_events,
       map: {
         locations: (mod.locations || []).map((loc) => {
           const { raw, ...rest } = loc;
@@ -78,8 +80,6 @@ router.get("/game/state", async (req, res, next) => {
         }),
         routes: mod.routes || [],
       },
-      characters: (mod.characters || []).map((card) => cardPublic(card, save.character?.name)),
-      events: (mod.events || []).map((e) => ({ code: e.code, name: e.name, special: Boolean(e.special) })),
       has_key: hasKey,
       echo: !hasKey,
       comfy: imageStatus,

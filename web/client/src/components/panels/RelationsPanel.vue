@@ -2,24 +2,18 @@
 import { computed, ref } from "vue";
 import Icon from "../Icon.vue";
 import GaugeMeter from "../GaugeMeter.vue";
-import { applyEdit, game, stageAction } from "../../store.js";
+import { game, stageAction } from "../../store.js";
 import { clamp, relationLabel } from "../../ui.js";
 import { signed } from "../../util.js";
-const relations = computed(() => game.state?.relations || []),
-  party = computed(() => Object.entries(game.state?.party || {}));
-const query = ref(""),
-  showAdd = ref(false),
-  newNpc = ref(""),
-  editing = ref(false);
-const noteDrafts = ref(new Map());
-const people = computed(() => {
-  const names = new Set([
-    ...game.characters
-      .filter((card) => card.name !== game.state?.character?.name)
-      .map((card) => card.name),
-    ...relations.value.map((relation) => relation.npc),
-  ]);
-  return [...names]
+const relations = computed(() => game.state?.relations || []);
+const party = computed(() =>
+  Object.entries(game.state?.party || {}).filter(([name]) =>
+    relations.value.some((relation) => relation.npc === name),
+  ),
+);
+const query = ref("");
+const people = computed(() =>
+  [...new Set(relations.value.map((relation) => relation.npc))]
     .map((name) => ({
       name,
       card: game.characters.find((card) => card.name === name),
@@ -29,31 +23,12 @@ const people = computed(() => {
       (person.name + " " + (person.card?.concept || "")).includes(
         query.value.trim(),
       ),
-    );
-});
-async function add() {
-  if (!newNpc.value.trim()) return;
-  if (
-    await applyEdit({ op: "set_relation", npc: newNpc.value.trim(), value: 0 })
-  ) {
-    newNpc.value = "";
-    showAdd.value = false;
-  }
-}
-const setValue = (npc, value) =>
-  applyEdit({ op: "set_relation", npc, value: Number(value) || 0 });
-async function setNote(person) {
-  const value = noteDrafts.value.get(person.name);
-  if (value === undefined || value === (person.relation?.note || "")) return;
-  if (await applyEdit({ op: "set_relation", npc: person.name, note: value })) {
-    if (noteDrafts.value.get(person.name) === value)
-      noteDrafts.value.delete(person.name);
-  }
-}
+    ),
+);
 </script>
 <template>
   <div v-if="!game.loaded" class="empty-hint">
-    旅途中认识的人物、关系和同行者会显示在这里。
+    旅途中认识的人物和关系会显示在这里。
   </div>
   <template v-else>
     <div class="panel-toolbar">
@@ -61,24 +36,10 @@ async function setNote(person) {
         <Icon name="search" :size="15" /><input
           v-model="query"
           aria-label="搜索人物"
-          placeholder="搜索人物或身份…"
+          placeholder="搜索已认识的人物或身份…"
         />
       </div>
-      <div class="toolbar-buttons">
-        <button
-          class="secondary-button"
-          :aria-pressed="editing"
-          @click="editing = !editing"
-        >
-          {{ editing ? "完成管理" : "管理关系" }}</button
-        ><button
-          class="primary-button"
-          :disabled="game.busy"
-          @click="showAdd = true"
-        >
-          <Icon name="plus" :size="15" />建立关系
-        </button>
-      </div>
+      <p class="hint">相识后解锁，关系会随对话与实际互动变化。</p>
     </div>
     <div class="people-grid">
       <article
@@ -129,44 +90,11 @@ async function setNote(person) {
           <div class="relation-labels">
             <span>死敌</span><span>中立</span><span>生死之交</span>
           </div>
-          <p v-if="!editing && person.relation.note" class="person-note">
+          <p v-if="person.relation.note" class="person-note">
             {{ person.relation.note }}
-          </p>
-          <div v-if="editing" class="relation-controls">
-            <button
-              class="secondary-button"
-              :disabled="game.busy || person.relation.value <= -5"
-              :aria-label="person.name + '关系减1'"
-              @click="setValue(person.name, person.relation.value - 1)"
-            >
-              −</button
-            ><n-input
-              :value="noteDrafts.get(person.name) ?? person.relation.note ?? ''"
-              size="small"
-              :disabled="game.busy"
-              placeholder="关系备注"
-              @update:value="(value) => noteDrafts.set(person.name, value)"
-              @blur="setNote(person)"
-            /><button
-              class="secondary-button"
-              :disabled="game.busy || person.relation.value >= 5"
-              :aria-label="person.name + '关系加1'"
-              @click="setValue(person.name, person.relation.value + 1)"
-            >
-              ＋
-            </button>
-          </div></template
+          </p></template
         >
-        <div v-else class="unknown-relation">
-          <span>尚未建立关系记录</span
-          ><button
-            class="text-button"
-            :disabled="game.busy"
-            @click="setValue(person.name, 0)"
-          >
-            建立记录
-          </button>
-        </div>
+
         <button
           class="text-button conversation"
           :disabled="game.busy"
@@ -179,12 +107,12 @@ async function setNote(person) {
         {{
           query
             ? "没有找到匹配的人物。"
-            : "还没有人物资料，可以建立一条关系记录。"
+            : "还没有相识的人物。探索和对话后，新的人物关系会自动记录。"
         }}
       </div>
     </div>
     <section v-if="party.length" class="card party-section">
-      <h3 class="section-label">同行者状态</h3>
+      <h3 class="section-label">已知人物状态</h3>
       <div class="party-grid">
         <article v-for="[name, member] in party" :key="name" class="party-card">
           <div class="party-title">
@@ -192,7 +120,7 @@ async function setNote(person) {
             <div>
               <b>{{ name }}</b
               ><small
-                >同行关系：{{ relationLabel(member.relation) }} ·
+                >关系：{{ relationLabel(member.relation) }} ·
                 {{ signed(member.relation) }}</small
               >
             </div>
@@ -214,32 +142,10 @@ async function setNote(person) {
           </div>
         </article>
       </div>
-      <p class="hint">同行者的状态与关系随冒险更新。这里展示你已知的资料。</p>
+      <p class="hint">
+        这里展示已认识人物的公开状态。关系与资料会随实际互动更新。
+      </p>
     </section>
-    <n-modal
-      v-model:show="showAdd"
-      preset="card"
-      title="建立人物关系"
-      style="max-width: 420px"
-      :bordered="false"
-      ><n-input
-        v-model:value="newNpc"
-        placeholder="人物名称"
-        @keyup.enter="add"
-      />
-      <p class="hint">初始关系为 0。可以随后调整数值与备注。</p>
-      <template #footer
-        ><div class="modal-actions">
-          <n-button @click="showAdd = false">取消</n-button
-          ><n-button
-            type="primary"
-            :disabled="game.busy || !newNpc.trim()"
-            @click="add"
-            >建立关系</n-button
-          >
-        </div></template
-      ></n-modal
-    >
   </template>
 </template>
 <style scoped>
@@ -269,10 +175,7 @@ async function setNote(person) {
 .search-field:focus-within {
   border-color: var(--brass-dim);
 }
-.toolbar-buttons {
-  display: flex;
-  gap: 8px;
-}
+
 .people-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -373,27 +276,6 @@ async function setNote(person) {
   color: var(--text-faint);
   margin-top: 6px;
 }
-.relation-controls {
-  display: flex;
-  gap: 6px;
-  margin-top: 12px;
-}
-.relation-controls > .n-input {
-  flex: 1;
-  min-width: 0;
-}
-.relation-controls button {
-  padding: 4px 8px;
-}
-.unknown-relation {
-  display: flex;
-  gap: 8px;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 10px;
-  color: var(--text-faint);
-  margin-top: 20px;
-}
 .conversation {
   margin-top: 15px;
   padding-top: 12px;
@@ -454,11 +336,7 @@ async function setNote(person) {
   flex-wrap: wrap;
   margin-top: 10px;
 }
-.modal-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
+
 @media (max-width: 1400px) {
   .people-grid,
   .party-grid {
@@ -472,9 +350,6 @@ async function setNote(person) {
   }
   .search-field {
     width: 100%;
-  }
-  .toolbar-buttons {
-    margin-left: auto;
   }
 }
 </style>

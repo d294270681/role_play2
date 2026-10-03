@@ -475,15 +475,7 @@ def new_game(module_name, slot=1, character_name=None):
             "value": clamp(_int(r.get("value"), 0), -5, 5),
             "note": str(r.get("note") or ""),
         })
-    for c in mod.get("characters") or []:
-        if c is card or c.get("attitude") is None:
-            continue
-        if not any(r["npc"] == c["name"] for r in relations):
-            relations.append({
-                "npc": c["name"],
-                "value": clamp(_int(c.get("attitude"), 0), -5, 5),
-                "note": "对主角态度",
-            })
+    # NPC 卡的态度供 GM 裁决；玩家只在开局关系或实际相识后解锁记录。
 
     inventory = [
         {"name": str(it.get("name")), "qty": _int(it.get("qty"), 1),

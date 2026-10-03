@@ -3,7 +3,7 @@
  *   POST /api/game/new   开新档 {module, slot?, character?}
  *   POST /api/turn       一个 GM 回合（SSE：narrative/dice/note/state/image/done/error）
  *   POST /api/move       移动 {module, slot, to}
- *   POST /api/state/edit 玩家编辑 {module, slot, op}
+ *   POST /api/state/edit 玩家按规则成长 {module, slot, op: spend_xp}
  *
  * 同一 (module, slot) 的 turn / move / edit / new 走同一把 promise 链锁串行；
  * turn 先把新存档落盘，再发出 state 事件（客户端断开也会跑完并落盘）。
@@ -16,7 +16,8 @@ import * as stateMod from "../engine/state.js";
 import { toInt } from "../engine/pycompat.js";
 import * as configMod from "../config.js";
 import * as gm from "../gm.js";
-import { ApiError, loadModuleChecked, loadSave, nameMatch, slotArg, statePublic, withSlotLock } from "./shared.js";
+import { ApiError, loadModuleChecked, loadSave, nameMatch, slotArg, progressPublic, withSlotLock } from "./shared.js";
+import { isPlayerEdit, WORLD_EDIT_MESSAGE } from "../../shared/playerActions.js";
 
 const router = Router();
 
@@ -111,7 +112,7 @@ router.post("/game/new", async (req, res, next) => {
       const existed = fs.existsSync(stateMod.slotPath(entry.name, slot));
       const save = stateMod.newGame(entry.dirname, slot, character);
       const file = stateMod.save(save);
-      return { state: statePublic(save, mod), path: file, overwrote: existed };
+      return { ...progressPublic(save, mod), path: file, overwrote: existed };
     });
     res.json(out);
   } catch (e) {
@@ -157,7 +158,7 @@ router.post("/turn", async (req, res, next) => {
             } catch (e) {
               throw new Error(`存档写入失败：${e?.message ?? e}`);
             }
-            send({ ...event, state: statePublic(event.state, mod) });
+            send({ ...event, ...progressPublic(event.state, mod) });
           } else {
             send(event);
           }
@@ -191,7 +192,7 @@ router.post("/move", async (req, res, next) => {
       const save = loadSave(entry, slot);
       const result = doMove(mod, save, target);
       result.path = stateMod.save(save);
-      result.state = statePublic(save, mod);
+      Object.assign(result, progressPublic(save, mod));
       return result;
     });
     res.json(out);
@@ -206,12 +207,13 @@ router.post("/state/edit", async (req, res, next) => {
     const slot = slotArg(req.body?.slot ?? 1);
     const op = req.body?.op;
     if (!op || typeof op !== "object" || Array.isArray(op)) throw new ApiError(400, "缺少编辑操作 op（对象）");
+    if (!isPlayerEdit(op)) throw new ApiError(403, WORLD_EDIT_MESSAGE);
     const out = await withSlotLock(entry.name, slot, () => {
       const save = loadSave(entry, slot);
       const draft = structuredClone(save);
       const [ok, message] = stateMod.applyEdit(draft, op);
       const file = ok ? stateMod.save(draft) : null;
-      return { ok: Boolean(ok), message, state: statePublic(ok ? draft : save, mod), path: file };
+      return { ok: Boolean(ok), message, ...progressPublic(ok ? draft : save, mod), path: file };
     });
     res.json(out);
   } catch (e) {

@@ -6,6 +6,7 @@ import path from "node:path";
 
 import * as loader from "../engine/moduleLoader.js";
 import * as stateMod from "../engine/state.js";
+import { knownRelations, knownNpcNames, unlockedEvents } from "../progression.js";
 
 export class ApiError extends Error {
   constructor(status, message) {
@@ -107,16 +108,32 @@ export function cardPublic(card, playerName = "") {
 
 export function statePublic(save, mod) {
   const out = pick(save, PUBLIC_STATE_KEYS);
-  out.party = Object.fromEntries(Object.entries(save.party || {}).map(([name, member]) => {
+  const known = knownNpcNames(save, mod);
+  out.relations = knownRelations(save, mod);
+  out.party = Object.fromEntries(Object.entries(save.party || {}).filter(([name]) => known.has(name)).map(([name, member]) => {
     const card = (mod.characters || []).find((c) => c.name === name);
     // 旧档 notes 混有秘密，不能靠关键词删改；公开备注须由独立字段明确提供。
     const description = [card?.concept, card?.meta?.["外貌"], card?.meta?.["特点"]].filter(Boolean).join("；");
     return [name, {
       ...pick(member, ["gauges", "relation", "statuses"]),
+      relation: out.relations.find((relation) => relation.npc === name)?.value ?? member.relation ?? 0,
       notes: String(member.public_notes ?? description),
     }];
   }));
   return structuredClone(out);
+}
+
+/** HTTP 与 SSE 共用，新的相识/事件可在结算后立即显示，无需刷新。 */
+export function progressPublic(save, mod) {
+  const known = knownNpcNames(save, mod);
+  return {
+    state: statePublic(save, mod),
+    characters: (mod.characters || [])
+      .filter((card) => card.name === save.character?.name || known.has(card.name))
+      .map((card) => cardPublic(card, save.character?.name)),
+    unlocked_events: unlockedEvents(save, mod)
+      .map((event) => ({ code: event.code, name: event.name, special: Boolean(event.special) })),
+  };
 }
 
 export function nameMatch(a, b) {

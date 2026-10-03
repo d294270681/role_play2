@@ -22,7 +22,7 @@ export const VIEWS = [
     key: "items",
     label: "装备背包",
     icon: "backpack",
-    caption: "管理随身物品、资金与负重",
+    caption: "随身物品、资金与负重，随行动结算更新",
   },
   {
     key: "clocks",
@@ -34,13 +34,13 @@ export const VIEWS = [
     key: "relations",
     label: "人物关系",
     icon: "users",
-    caption: "认识的人物、关系与同行者",
+    caption: "已认识的人物、关系与公开状态",
   },
   {
     key: "clues",
     label: "线索板",
     icon: "search",
-    caption: "整理发现，让每条线索有迹可循",
+    caption: "发现与调查结果，随冒险自动记录",
   },
   {
     key: "events",

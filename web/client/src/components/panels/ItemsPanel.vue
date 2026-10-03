@@ -1,15 +1,13 @@
 <script setup>
 import { computed, ref } from "vue";
 import Icon from "../Icon.vue";
-import { applyEdit, game } from "../../store.js";
+import { game, stageAction } from "../../store.js";
 import { inventoryLoad } from "../../ui.js";
-const inventory = computed(() => game.state?.inventory || []),
-  funds = computed(() => Number(game.state?.funds) || 0);
-const capacity = computed(() => Number(game.state?.character?.capacity) || 0),
-  used = computed(() => inventoryLoad(inventory.value));
-const query = ref(""),
-  editing = ref(false),
-  showAdd = ref(false);
+const inventory = computed(() => game.state?.inventory || []);
+const funds = computed(() => Number(game.state?.funds) || 0);
+const capacity = computed(() => Number(game.state?.character?.capacity) || 0);
+const used = computed(() => inventoryLoad(inventory.value));
+const query = ref("");
 const filtered = computed(() =>
   inventory.value.filter((item) =>
     (item.name + " " + (item.note || ""))
@@ -17,22 +15,6 @@ const filtered = computed(() =>
       .includes(query.value.trim().toLowerCase()),
   ),
 );
-const draft = ref({ name: "", qty: 1, slots: 1, note: "" });
-async function add() {
-  if (!draft.value.name.trim()) return;
-  if (
-    await applyEdit({
-      op: "add_item",
-      name: draft.value.name.trim(),
-      qty: Number(draft.value.qty) || 1,
-      slots: Number(draft.value.slots) || 1,
-      note: draft.value.note.trim(),
-    })
-  ) {
-    draft.value = { name: "", qty: 1, slots: 1, note: "" };
-    showAdd.value = false;
-  }
-}
 const iconFor = (name) =>
   /棍|剑|刀|枪|弓/.test(name)
     ? "swords"
@@ -51,17 +33,6 @@ const iconFor = (name) =>
         <div>
           <span>可用资金</span><b>{{ funds }}</b>
         </div>
-        <n-input-number
-          v-if="editing"
-          :value="funds"
-          :disabled="game.busy"
-          :min="0"
-          size="small"
-          style="width: 130px"
-          @change="
-            (value) => applyEdit({ op: 'set_funds', value: Number(value) || 0 })
-          "
-        />
       </section>
       <section class="card load-card">
         <div>
@@ -82,7 +53,7 @@ const iconFor = (name) =>
         </div>
         <span class="hint">{{
           used > capacity
-            ? "已超出负重，请整理物品"
+            ? "已超出负重，可以通过行动整理物品"
             : "还有 " + Math.max(0, capacity - used) + " 格空间"
         }}</span>
       </section>
@@ -95,24 +66,14 @@ const iconFor = (name) =>
           placeholder="搜索名称或备注…"
         />
       </div>
-      <div class="toolbar-buttons">
-        <button
-          class="secondary-button"
-          :aria-pressed="editing"
-          @click="editing = !editing"
-        >
-          {{ editing ? "完成管理" : "管理背包" }}</button
-        ><button
-          class="primary-button"
-          :disabled="game.busy"
-          @click="showAdd = true"
-        >
-          <Icon name="plus" :size="15" />添加物品
-        </button>
-      </div>
+      <p class="hint">获得、购买和消耗物品后，背包会随行动结算更新。</p>
     </div>
     <div class="inventory-grid">
-      <article v-for="item in filtered" :key="item.name" class="item-card">
+      <article
+        v-for="(item, index) in filtered"
+        :key="index + ':' + item.name"
+        class="item-card"
+      >
         <div class="item-art">
           <Icon :name="iconFor(item.name)" :size="32" /><span
             class="item-quantity"
@@ -124,27 +85,14 @@ const iconFor = (name) =>
           <p>{{ item.note || "暂无物品备注" }}</p>
           <span class="tag subtle">每件 {{ item.slots || 0 }} 格</span>
         </div>
-        <div v-if="editing" class="item-controls">
-          <n-input-number
-            :value="Number(item.qty) || 0"
-            :min="0"
-            :disabled="game.busy"
-            size="small"
-            @change="
-              (value) =>
-                applyEdit({
-                  op: 'set_item_qty',
-                  name: item.name,
-                  qty: Number(value) || 0,
-                })
-            "
-          /><button
-            class="icon-button remove-item"
-            :aria-label="'移除' + item.name"
-            :disabled="game.busy"
-            @click="applyEdit({ op: 'remove_item', name: item.name })"
+        <div class="item-actions">
+          <button
+            class="text-button"
+            :disabled="game.busy || (item.qty ?? 1) <= 0"
+            :aria-label="'写下使用' + item.name + '的行动'"
+            @click="stageAction('尝试使用背包中的' + item.name)"
           >
-            <Icon name="close" :size="16" />
+            写下使用行动<Icon name="arrow" :size="14" />
           </button>
         </div>
       </article>
@@ -152,47 +100,10 @@ const iconFor = (name) =>
         {{
           query
             ? "没有找到匹配的物品。"
-            : "背包还是空的。将获得的装备或道具添加到这里。"
+            : "背包为空。旅途中实际获得的物品会自动记录在这里。"
         }}
       </div>
     </div>
-    <n-modal
-      v-model:show="showAdd"
-      preset="card"
-      title="添加物品"
-      style="max-width: 440px"
-      :bordered="false"
-      ><div class="item-form">
-        <label>物品名称</label
-        ><n-input v-model:value="draft.name" placeholder="例如：绳子" />
-        <div class="item-form-grid">
-          <div>
-            <label>数量</label
-            ><n-input-number v-model:value="draft.qty" :min="1" />
-          </div>
-          <div>
-            <label>每件占用格数</label
-            ><n-input-number v-model:value="draft.slots" :min="1" />
-          </div>
-        </div>
-        <label>备注</label
-        ><n-input
-          v-model:value="draft.note"
-          placeholder="携带位置、用途或其他备注"
-        />
-      </div>
-      <template #footer
-        ><div class="modal-actions">
-          <n-button @click="showAdd = false">取消</n-button
-          ><n-button
-            type="primary"
-            :disabled="!draft.name.trim() || game.busy"
-            @click="add"
-            >加入背包</n-button
-          >
-        </div></template
-      ></n-modal
-    >
   </template>
 </template>
 <style scoped>
@@ -331,44 +242,15 @@ const iconFor = (name) =>
   margin: 0 0 12px;
   line-height: 1.8;
 }
-.item-controls {
-  display: flex;
-  gap: 8px;
-  border-top: 1px solid var(--line);
-  padding: 10px;
+.item-actions {
+  padding: 0 17px 16px;
 }
-.item-controls > .n-input-number {
-  flex: 1;
-  min-width: 0;
-}
-.remove-item {
-  color: var(--blood);
+.item-actions button {
+  width: 100%;
+  justify-content: space-between;
 }
 .inventory-grid > .empty-hint {
   grid-column: 1/-1;
-}
-.item-form {
-  display: grid;
-  gap: 9px;
-}
-.item-form label {
-  display: block;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-.item-form-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin: 7px 0;
-}
-.item-form-grid label {
-  margin-bottom: 7px;
-}
-.modal-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
 }
 @media (max-width: 1400px) {
   .inventory-grid {

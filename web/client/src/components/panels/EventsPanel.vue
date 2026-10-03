@@ -2,8 +2,7 @@
 import { computed, ref } from "vue";
 import Icon from "../Icon.vue";
 import { game } from "../../store.js";
-const fired = computed(() => game.state?.events_fired || []),
-  deck = computed(() => game.events || []);
+const fired = computed(() => game.state?.events_fired || []);
 const log = computed(() => (game.state?.log || []).slice(-40).reverse());
 const pending = computed(() => {
   const events = [
@@ -22,6 +21,17 @@ const pending = computed(() => {
 const showDeck = ref(false),
   showLog = ref(true),
   query = ref("");
+const knownCodes = computed(
+  () =>
+    new Set(
+      [...fired.value, ...pending.value].map((event) => String(event.code)),
+    ),
+);
+const deck = computed(() =>
+  (game.events || []).filter((event) =>
+    knownCodes.value.has(String(event.code)),
+  ),
+);
 const firedCodes = computed(
   () => new Set(fired.value.map((event) => String(event.code))),
 );
@@ -128,13 +138,20 @@ const logIcon = (type) =>
     <section class="card event-deck">
       <div class="event-section-head">
         <h3 class="section-label">
-          事件牌目录<span class="tag subtle">{{ deck.length }}</span>
+          已解锁事件<span class="tag subtle">{{ deck.length }}</span>
         </h3>
-        <button class="text-button" @click="showDeck = !showDeck">
-          {{ showDeck ? "收起目录" : "查看目录" }}
+        <button
+          v-if="deck.length"
+          class="text-button"
+          @click="showDeck = !showDeck"
+        >
+          {{ showDeck ? "收起记录" : "查看记录" }}
         </button>
       </div>
-      <template v-if="showDeck"
+      <p v-if="!deck.length" class="hint">
+        事件在游戏中实际触发后，会进入这里的记录。
+      </p>
+      <template v-if="showDeck && deck.length"
         ><div class="deck-search">
           <Icon name="search" :size="14" /><input
             v-model="query"
@@ -156,7 +173,7 @@ const logIcon = (type) =>
                 ? "已触发"
                 : event.special
                   ? "特殊事件"
-                  : "尚未触发"
+                  : "等待处理"
             }}</span>
           </article>
           <p v-if="!filteredDeck.length" class="hint">没有匹配的事件牌。</p>
