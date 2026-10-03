@@ -615,7 +615,7 @@ test("首次打开未配置环境会弹出设置，主动选择演示后不会�
   assert.equal(game.settingsOpen, false);
 });
 
-test("模型表单留空保留密钥，显式清除、无需认证和专用登录不误传密钥", () => {
+test("模型表单留空保留密钥，显式清除、无需认证和演示不误传密钥", () => {
   const cfg = {
     llm_mode: "api",
     base_url: "https://example.invalid/v1",
@@ -632,10 +632,6 @@ test("模型表单留空保留密钥，显式清除、无需认证和专用登�
   form.api_auth = "none";
   form.api_key = "new-secret";
   assert.equal(modelPatch(form, cfg).api_key, "");
-  form.llm_mode = "kimi-oauth";
-  const login = modelPatch(form, cfg);
-  assert.equal("api_key" in login, false);
-  assert.equal(login.model, "k3");
   form.llm_mode = "demo";
   assert.equal("api_key" in modelPatch(form, cfg), false);
 });

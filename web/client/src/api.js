@@ -81,6 +81,7 @@ export const api = {
     return request("/api/config", { method: "POST", body: patch });
   },
   testModelConfig(patch) { return request("/api/config/test", { method: "POST", body: patch }); },
+  listModelConfig(patch) { return request("/api/config/models", { method: "POST", body: patch }); },
   imageStatus() { return request("/api/image/status"); },
   imageEnvironment(profile) { return request("/api/image/environment", { method: "POST", body: { profile } }); },
   imageSetupStatus() { return request("/api/image/setup"); },

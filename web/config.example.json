@@ -1,15 +1,18 @@
 {
   "llm_mode": "api",
+  "llm_provider": "deepseek",
   "api_auth": "bearer",
-  "base_url": "",
+  "base_url": "https://api.deepseek.com",
   "api_key": "",
   "model": "",
-  "temperature": 0.8,
+  "temperature": 1,
+  "top_p": null,
+  "max_tokens": 8192,
+  "thinking": "default",
+  "reasoning_effort": "default",
+  "thinking_budget": 4096,
   "stream": true,
   "timeout": 180,
-  "kimi_oauth": {
-    "enabled": false
-  },
   "comfy_url": "http://127.0.0.1:8188",
   "image_generation": {
     "mode": "internal",

@@ -139,7 +139,7 @@ export function main(argv = process.argv.slice(2)) {
   const app = createApp();
   const server = app.listen(port, "127.0.0.1", () => {
     console.log(`[RPG] 后端已启动：http://127.0.0.1:${port}/`);
-    console.log(`[RPG] 配置：${configMod.CONFIG_PATH}（认证模式：${configMod.maskedConfig(cfg).auth_mode}）`);
+    console.log(`[RPG] 配置：${configMod.CONFIG_PATH}（服务：${cfg.llm_provider}；认证：${configMod.maskedConfig(cfg).auth_mode}）`);
     console.log(`[RPG] 文字模型：${cfg.llm_mode === "demo" ? "演示模式" : configMod.modelConfigured(cfg) ? `${cfg.model}（${cfg.base_url}）` : "未配置，请在网页设置中填写模型 API"}`);
     console.log(`[RPG] 前端：${fs.existsSync(CLIENT_DIST) ? CLIENT_DIST : "web/client/dist 尚未部署（/ 显示占位页）"}`);
     console.log(`[RPG] 静态资源：${comfy.ASSETS_ROOT} → /assets`);

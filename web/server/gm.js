@@ -5,7 +5,7 @@
  * 引擎部分改用 M4 的 Node 移植（web/server/engine/*.js）。本版新增：
  * - 协议 JSON 增加 image_prompt 键：非空时回合结束后异步调 comfy.js 生成插图并发 image 事件；
  * - LLM 客户端用 Node 22 原生 fetch 解析 SSE，支持通用 Bearer API 和无认证的本地接口；
- * - 显式选择 Kimi 登录时，Authorization 头由 auth.js 提供；
+ * - 模型接入由 llm/ 下的目录、参数策略与原生协议客户端负责；
  * - 未配置模型或显式选择演示模式时，使用本地示例回复。
  *
  * 对外接口：
@@ -30,7 +30,7 @@ import * as stateMod from "./engine/state.js";
 import { checkEffects, applyCheckEffects } from "./engine/rules.js";
 import { isDict, toInt } from "./engine/pycompat.js";
 import * as configMod from "./config.js";
-import * as authMod from "./auth.js";
+import { ModelClient } from "./llm/client.js";
 import * as comfy from "./comfy.js";
 
 export const MAX_ROUNDS = 3; // 一次回合最多几轮「判定 → 续写」
@@ -691,120 +691,18 @@ async function* streamEcho(messages) {
   }
 }
 
-function extractDeltaText(obj) {
-  const choices = obj?.choices || [];
-  if (!choices.length) return null;
-  const choice = choices[0] || {};
-  const delta = choice.delta || {};
-  if (isDict(delta) && delta.content) return String(delta.content);
-  const message = choice.message || {};
-  if (isDict(message) && message.content) return String(message.content);
-  return null;
-}
-
-/** OpenAI 兼容的 chat/completions 客户端；配置未完成或选择演示时使用本地回复。 */
-export class GMClient {
+/** The story engine depends on this small interface, independent of provider protocols. */
+export class GMClient extends ModelClient {
   constructor(config = null) {
     const cfg = configMod.normalizeConfig(config || {});
-    this.config = cfg;
+    super(cfg);
     this.base_url = cfg.base_url;
-    this.api_key = cfg.llm_mode === "api" && cfg.api_auth === "bearer" ? cfg.api_key : "";
     this.model = cfg.model;
-    this.temperature = cfg.temperature;
-    this.timeout = Math.max(5, toInt(cfg.timeout, 180));
-    this.stream = cfg.stream !== false;
-    this.oauth = configMod.oauthActive(cfg) ? authMod.getProvider(cfg) : null;
     this.echo = !configMod.modelConfigured(cfg);
   }
-
-  endpoint() {
-    return `${this.base_url}/chat/completions`;
-  }
-
-  /**
-   * Authorization 头里的凭证：OAuth 模式由 auth.js 供给（临近过期自动刷新，必要时写回凭证文件）；
-   * 静态模式直接用 api_key。错误信息里不含 token。
-   */
-  async authorizationToken() {
-    if (!this.oauth) return this.api_key;
-    try {
-      return await this.oauth.getToken();
-    } catch (e) {
-      throw new Error(`Kimi OAuth 凭证不可用：${authMod.redact(e?.message ?? e, [this.api_key])}`);
-    }
-  }
-
-  /** 产出模型文本增量（回声模式为本地演示文本）。超时按整段响应计（AbortSignal.timeout）。 */
   async *streamChat(messages) {
-    if (this.echo) {
-      yield* streamEcho(messages);
-      return;
-    }
-    const payload = { model: this.model, messages, temperature: this.temperature };
-    if (this.stream) payload.stream = true;
-    const token = await this.authorizationToken();
-    const headers = {
-      "Content-Type": "application/json; charset=utf-8",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      Accept: this.stream ? "text/event-stream" : "application/json",
-    };
-    let res;
-    try {
-      res = await fetch(this.endpoint(), {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(this.timeout * 1000),
-      });
-    } catch (e) {
-      throw new Error(`连接模型接口失败（${this.base_url}）：${e?.message ?? e}`);
-    }
-    if (!res.ok) {
-      let body = "";
-      try {
-        body = authMod.redact(await res.text(), [token]).split(/\s+/).join(" ").slice(0, 300);
-      } catch {
-        body = "";
-      }
-      // 401 多半是 token 被顶掉了：丢掉内存缓存，下次 getToken() 会重新读盘并刷新。
-      if (res.status === 401 && this.oauth) this.oauth.invalidate();
-      throw new Error(`模型接口返回 ${res.status}：${body || res.statusText}`);
-    }
-    if (!this.stream) {
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        throw new Error("模型接口返回的不是 JSON，请检查 Chat Completions 兼容地址");
-      }
-      const text = extractDeltaText(data);
-      if (text) yield text;
-      return;
-    }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder("utf-8");
-    let buf = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf("\n")) >= 0) {
-        const line = buf.slice(0, idx).replace(/\r$/, "").trim();
-        buf = buf.slice(idx + 1);
-        if (!line || line.startsWith(":") || !line.startsWith("data:")) continue;
-        const payloadLine = line.slice(5).trim();
-        if (payloadLine === "[DONE]") return;
-        let obj;
-        try {
-          obj = JSON.parse(payloadLine);
-        } catch {
-          continue;
-        }
-        const text = extractDeltaText(obj);
-        if (text) yield text;
-      }
-    }
+    if (this.echo) yield* streamEcho(messages);
+    else yield* super.streamChat(messages);
   }
 }
 

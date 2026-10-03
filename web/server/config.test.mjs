@@ -7,11 +7,11 @@ import path from "node:path";
 
 import { createApp } from "./index.js";
 import { CONFIG_PATH, defaultConfig, loadConfig, maskedConfig, mergeConfigPatch, modelConfigured, normalizeConfig, saveConfig, templateConfig, updateConfig } from "./config.js";
-import { DEFAULT_CREDENTIALS_PATH, KIMI_CHAT_BASE_URL, redact } from "./auth.js";
+import { redact } from "./llm/redact.js";
 import { GMClient } from "./gm.js";
 
 const TEST_KEY = "sk-offline-config-test-76ab91";
-const apiConfig = (extra = {}) => ({ llm_mode: "api", api_auth: "bearer", base_url: "https://example.invalid/v1", model: "test-model", api_key: TEST_KEY, ...extra });
+const apiConfig = (extra = {}) => ({ llm_mode: "api", llm_provider: "openai-compatible", api_auth: "bearer", base_url: "https://example.invalid/v1", model: "test-model", api_key: TEST_KEY, ...extra });
 
 function temporaryConfig(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rpg-llm-config-"));
@@ -48,7 +48,7 @@ async function httpFixture(t, initial = defaultConfig()) {
   const provider = http.createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
-    calls.push({ url: req.url, headers: req.headers, body: JSON.parse(body) });
+    calls.push({ url: req.url, headers: req.headers, body: body ? JSON.parse(body) : null });
     res.setHeader("Content-Type", "application/json");
     upstream.respond(req, res);
   }).listen(0, "127.0.0.1");
@@ -69,34 +69,34 @@ test("新模板不探测 Kimi 登录，未配置时使用演示回复", (t) => {
   const original = fs.existsSync.bind(fs);
   let credentialChecks = 0;
   t.mock.method(fs, "existsSync", (p) => {
-    if (p === DEFAULT_CREDENTIALS_PATH) { credentialChecks += 1; return true; }
+    if (String(p).includes(".kimi-code")) { credentialChecks += 1; return true; }
     return original(p);
   });
   const cfg = templateConfig();
   assert.equal(cfg.llm_mode, "api");
-  assert.equal(cfg.base_url, ""); assert.equal(cfg.model, ""); assert.equal(cfg.api_key, "");
+  assert.equal(cfg.llm_provider, "deepseek");
+  assert.equal(cfg.base_url, "https://api.deepseek.com"); assert.equal(cfg.model, ""); assert.equal(cfg.api_key, "");
   assert.equal(cfg.image_generation.enabled, false);
-  assert.equal(cfg.kimi_oauth.enabled, false);
+  assert.equal("kimi_oauth" in cfg, false);
   assert.equal(maskedConfig(cfg).auth_mode, "unconfigured");
   const client = new GMClient(cfg);
-  assert.equal(client.echo, true); assert.equal(client.oauth, null);
+  assert.equal(client.echo, true); assert.equal("oauth" in client, false);
   assert.equal(credentialChecks, 0);
 });
 
-test("旧 Kimi 配置仅在明确启用且地址匹配时迁移，通用 API 不借用登录凭证", () => {
-  const kimi = normalizeConfig({ base_url: KIMI_CHAT_BASE_URL, model: "k3", api_key: "", kimi_oauth: { enabled: true } });
-  assert.equal(kimi.llm_mode, "kimi-oauth"); assert.equal(kimi.temperature, 1);
-  assert.equal(normalizeConfig({ base_url: KIMI_CHAT_BASE_URL, api_key: " ", kimi_oauth: { enabled: true } }).llm_mode, "kimi-oauth");
+test("移除旧 Kimi 登录，迁移不转发旧凭证，通用 API 配置可继续使用", () => {
   for (const raw of [
-    { base_url: KIMI_CHAT_BASE_URL, model: "k3" },
-    apiConfig({ kimi_oauth: { enabled: true } }),
-    apiConfig({ base_url: KIMI_CHAT_BASE_URL, kimi_oauth: { enabled: true } }),
-    { ...kimi, llm_mode: "api", api_key: TEST_KEY },
+    { llm_mode: "kimi-oauth", base_url: "https://api.kimi.com/coding/v1", model: "k3", api_key: "old-key", image_generation: { enabled: false, profile: "qwen-image-2512" } },
+    { base_url: "https://api.kimi.com/coding/v1", kimi_oauth: { enabled: true } },
   ]) {
     const cfg = normalizeConfig(raw);
-    assert.equal(cfg.llm_mode, "api"); assert.equal(cfg.kimi_oauth.enabled, false);
-    assert.equal(new GMClient(cfg).oauth, null);
+    assert.equal(cfg.llm_mode, "api"); assert.equal(cfg.llm_provider, "deepseek");
+    assert.equal(cfg.model, ""); assert.equal(cfg.api_key, ""); assert.equal("kimi_oauth" in cfg, false);
+    assert.equal(new GMClient(cfg).echo, true); assert.equal("kimi_defaults" in maskedConfig(cfg), false);
   }
+  const cfg = normalizeConfig({ base_url: "https://example.invalid/v1", model: "a", api_key: TEST_KEY });
+  assert.equal(cfg.llm_provider, "openai-compatible"); assert.equal(cfg.api_key, TEST_KEY);
+  assert.throws(() => mergeConfigPatch(cfg, { llm_mode: "kimi-oauth" }), (e) => e.status === 400);
 });
 
 test("首次生成模板和保存后的重读使用同一 JSON 配置，文件外的密钥被掩码", (t) => {
@@ -267,4 +267,29 @@ test("网页的环境指引地址返回中文说明，不被前端 SPA 回退覆
   assert.match(text, /RPG 项目环境配置指引/); assert.match(text, /安装项目依赖\.bat/);
   assert.match(text, /web\/config\.json/); assert.match(text, /无需密钥/);
   assert.equal(text.includes(TEST_KEY), false); assert.equal(text.includes('<div id="app">'), false);
+});
+
+test("Anthropic 模型目录完整分页，候选密钥只发往候选接口，目录读取不保存配置", async (t) => {
+  const { request, files, base_url, calls, upstream } = await httpFixture(t);
+  const before = files.get(CONFIG_PATH);
+  upstream.respond = (req, res) => res.end(JSON.stringify(req.url.includes("after_id")
+    ? { data: [{ id: "second-model", display_name: "第二个模型", max_tokens: 16000 }], has_more: false, last_id: "second-model" }
+    : { data: [{ id: "first-model", display_name: "第一个模型", max_tokens: 8192 }], has_more: true, last_id: "first-model" }));
+  const response = await request("/api/config/models", { llm_provider: "anthropic", base_url, api_key: TEST_KEY, model: "" });
+  assert.equal(response.status, 200);
+  const catalog = await response.json();
+  assert.equal(catalog.source, "live"); assert.deepEqual(catalog.models.map((m) => m.id), ["first-model", "second-model"]);
+  assert.equal(calls.length, 2); assert.match(calls[1].url, /after_id=first-model/);
+  assert.equal(calls[0].headers["x-api-key"], TEST_KEY); assert.equal(calls[0].headers.authorization, undefined);
+  assert.equal(calls[0].headers["anthropic-version"], "2023-06-01");
+  assert.equal(calls[0].body, null); assert.equal(files.get(CONFIG_PATH), before); assert.equal(JSON.stringify(catalog).includes(TEST_KEY), false);
+});
+
+test("模型目录鉴权失败不伪装成功、不回显密钥，也不覆盖已存配置", async (t) => {
+  const { request, files, base_url, upstream } = await httpFixture(t);
+  const before = files.get(CONFIG_PATH);
+  upstream.respond = (req, res) => { res.statusCode = 401; res.end(`Invalid ${TEST_KEY}`); };
+  const response = await request("/api/config/models", apiConfig({ base_url }));
+  assert.equal(response.status, 401); assert.equal((await response.text()).includes(TEST_KEY), false);
+  assert.equal(files.get(CONFIG_PATH), before);
 });
